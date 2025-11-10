@@ -1,8 +1,8 @@
 import pyfftw
 from matplotlib import pyplot as plt
 import numpy as np
-import psk as psk
-import fsk as fsk
+from .psk import create_srrc_qpsk_signal, create_rect_bpsk_signal
+from .fsk import create_gmsk_signal
 import tracemalloc
 import pytest
 
@@ -240,11 +240,9 @@ def calculate_bpsk_scf(number_of_points, alpha_slices, Tk, f_offset, conjugate=F
         
     return spectral_correlation
 
-def validation_test(func_lambda, name="algorithm", Np=512, snr=10, conjugate=False):
-    rng = np.random.default_rng(11)
-
+def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20, no_of_run=1, conjugate=False, plot=True, save=True, fam=False):
     start_i = 10
-    end_i = 19 #17
+    end_i = max_log_2 #17
     range_i = end_i - start_i
     
     samples_per_symbol = 10 # Symbol rate = 0.20 Hz
@@ -253,75 +251,84 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, conjugate=Fal
     max_no_of_symbols = 2**(end_i-1); #65536 samples
     max_length = max_no_of_symbols * samples_per_symbol; #262144 samples
 
-    if not conjugate:
-        cycle_frequency_check = 1/(2*samples_per_symbol) * np.arange(1, 20);
+    if conjugate:
+        cycle_frequency_check = 1/(samples_per_symbol) * np.arange(-30, 30) + 2*cfo;
     else:
-        cycle_frequency_check = 1/(2*samples_per_symbol) * np.arange(-20, 20);
-
-    cycle_frequency_check = np.round(cycle_frequency_check[cycle_frequency_check < 1], 2)
+        cycle_frequency_check = 1/(samples_per_symbol) * np.arange(1, 30);
+    
+    cycle_frequency_check = np.round(cycle_frequency_check[np.abs(cycle_frequency_check) < 1], 2)
 
     scd_ref = calculate_bpsk_scf(max_length, cycle_frequency_check, samples_per_symbol, cfo, conjugate=conjugate)
+
+    # print(np.shape(scd_ref))
 
     scd_ref = np.fft.ifftshift(scd_ref, axes=1)
 
     scd_rmse = np.ones(range_i)
-    no_of_points = np.ones(range_i)
+    signal_length = 2**(np.arange(start_i, end_i))
 
     for i in range(start_i, end_i):
-        number_of_symbols = 2**i
-
-        # Noise first then add cfo
-        bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
-        bpsk_signal_noise = add_awgn_snr(bpsk_signal, desired_snr=snr, rng=rng)
-        bpsk_signal_noise_cfo = add_cfo(bpsk_signal_noise, cfo) # Add 0.5Hz CFO
-        bpsk_signal_noise_cfo = bpsk_signal_noise_cfo[:2**i]
-
-        N = len(bpsk_signal_noise_cfo)
-
-        print(f"Signal Length: {N}, Window Length: {Np}")
-        
-        spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np, conjugate)
-
-        #Alpha binning
-        alpha = np.round(alpha * N) / N
-
         scd_sum_square_error = 0
         num_points = 0
-        fig, axs = plt.subplots(len(cycle_frequency_check), sharex=True, figsize=(10,7))
-        for j in range(len(cycle_frequency_check)):
-            mask = np.abs(alpha - cycle_frequency_check[j]) < 1/(2*N)
-            scd_slice = spectral_corr[mask]
-            f_slice = f[mask]
-            f_index = np.rint(f_slice * max_length).astype(int)
-            num_points += len(scd_slice)
+        number_of_symbols = 2**i
+        N = 2**i 
+        # print(f"Signal Length: {N}, Window Length: {Np}")
 
-            axs[j].plot(f_slice, scd_slice, label="Algorithm")
-            axs[j].plot(f_slice, scd_ref[j, f_index], label="FSM")
-            axs[j].label_outer()
-            axs[j].text(0.9, 0.5, f'alpha = {cycle_frequency_check[j]}', horizontalalignment='center', verticalalignment='center', transform=axs[j].transAxes)
-            
-            scd_sum_square_error += np.sum((scd_slice - scd_ref[j, f_index])**2)
+        if plot : 
+            fig, axs = plt.subplots(len(cycle_frequency_check), sharex=True, figsize=(10,9))
+            fig.suptitle(f'BPSK SCF, N={N}, Np={Np}', fontsize=12)
+            plt.subplots_adjust(hspace=0.5)
+        
+        for j in range(no_of_run):
+            rng=np.random.default_rng()
+            # Noise first then add cfo
+            bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
+            bpsk_signal_cfo = add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
+            bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr, rng=rng)
+            bpsk_signal_noise_cfo = bpsk_signal_noise_cfo[:N]
 
-        handles, labels = axs[j].get_legend_handles_labels()
-        axs[j].set_xlabel("Spectral Frequency (Hz)")
-        fig.legend(handles, labels, loc='upper right')
-        fig.suptitle(f'BPSK SCF, N={N}, Np={Np}', fontsize=12)
-        plt.subplots_adjust(hspace=0.5)
-        plt.show()
+            if fam:
+                spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, L=Np/4, conjugate=conjugate)
+            else:
+                spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate)
+    
+            alpha = np.round(alpha * N) / (N)
 
-        #fig.savefig(f"fig/{name}_{N}_{Np}.png")
+            for k in range(len(cycle_frequency_check)):
+                mask = np.abs(alpha - cycle_frequency_check[k]) < 1/(2*N)
+                scd_slice = spectral_corr[mask]
+                f_slice = f[mask]
+                f_index = np.rint(f_slice * max_length).astype(int)
+                num_points += len(scd_slice)
+                scd_sum_square_error += np.sum((scd_slice - scd_ref[k, f_index])**2)
+
+                if plot and j == no_of_run - 1:
+                    axs[k].plot(f_slice, scd_slice, label=name)
+                    axs[k].plot(f_slice, scd_ref[k, f_index], label="Theory", color="orange")
+                    axs[k].label_outer()
+                    axs[k].text(0.9, 0.5, f'alpha = {cycle_frequency_check[k]}', horizontalalignment='center', verticalalignment='center', transform=axs[k].transAxes)
+                elif plot:
+                    axs[k].plot(f_slice, scd_slice)
+                
+        if plot:
+            handles, labels = axs[-1].get_legend_handles_labels()
+            fig.legend(handles, labels, loc='upper right')
+            axs[-1].set_xlabel("Spectral Frequency (Hz)")
+            plt.show()
 
         scd_rmse[i - start_i] = np.sqrt(scd_sum_square_error/num_points)
-        no_of_points[i - start_i] = np.log2(N)
-        print(f"SCD RMSE: {scd_rmse[i - start_i]}")
+        # print(f"SCD RMSE: {scd_rmse[i - start_i]}")
 
-    plt.plot(2**no_of_points, scd_rmse)
-    plt.xscale('log', base=2)
-    plt.xlabel("Signal Length")
-    plt.ylabel("RMSE")
-    plt.title(f"RMSE vs Signal Length (Np={Np})")
+    if plot: 
+        plt.plot(signal_length, scd_rmse)
+        plt.xscale('log', base=2)
+        plt.xlabel("Signal Length (log2 scale)")
+        plt.ylabel("RMSE")
+        plt.title(f"RMSE vs Signal Length (Np={Np})")
+        if save:
+            plt.savefig(f"fig/{name}_validation.png")
 
-    return scd_rmse, no_of_points
+    return scd_rmse, signal_length
 
 def rmse_vs_theoretical_bpsk(spectral_correlation, f, alpha, samples_per_symbol, cfo, conjugate=False):
     N = np.shape(spectral_correlation)[1]
@@ -394,15 +401,15 @@ def plot_roc_full(func_lambda, Np=8, no_of_simulation=1000, threshold_resolution
         
         for j in range(no_of_simulation*2):
             # Half signal + noise, half only noise
-            bpsk_signal = psk.create_rect_bpsk_signal(N, samples_per_symbol)
+            bpsk_signal = create_rect_bpsk_signal(N, samples_per_symbol)
             bpsk_signal_cfo = add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
             bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr[i])
 
-            qpsk_signal = psk.create_srrc_qpsk_signal(N, samples_per_symbol, srrc_filter_span, beta)
+            qpsk_signal = create_srrc_qpsk_signal(N, samples_per_symbol, srrc_filter_span, beta)
             qpsk_signal_cfo = add_cfo(qpsk_signal, cfo) # Add 0.5Hz CFO
             qpsk_signal_noise_cfo = add_awgn_snr(qpsk_signal_cfo, desired_snr=snr[i])
 
-            gmsk_signal, _, _ = fsk.create_gmsk_signal(N, samples_per_symbol, f_carrier=cfo, BT=bandwidth_time, gauss_filter_span=srrc_filter_span)
+            gmsk_signal, _, _ = create_gmsk_signal(N, samples_per_symbol, f_carrier=cfo, BT=bandwidth_time, gauss_filter_span=srrc_filter_span)
             gmsk_signal_noise_cfo = add_awgn_snr(gmsk_signal, desired_snr=snr[i])
             
             # Even for signal present
@@ -586,7 +593,7 @@ def window_test(scf_func, name="algorithm_window_test", signal_length=4096, Np=6
     cycle_leakage_pts = np.zeros((no_of_windows, no_of_windows))
 
     for i in range(number_of_runs):
-        bpsk_signal = psk.create_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
+        bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
         bpsk_signal_cfo = add_cfo(bpsk_signal, 0.05) # Add 0.5Hz CFO
         bpsk_signal_cfo_noise = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr) # Add 1W AWGN
 
@@ -602,21 +609,6 @@ def window_test(scf_func, name="algorithm_window_test", signal_length=4096, Np=6
                     window_j = get_window(all_windows[j], N)
             
                 scd, f, alpha = scf_func(test_signal, window_a, window_j, Np, conjugate)
-            
-                # top_indices = np.argpartition(scd.flatten(), -number_of_top_indices)[-number_of_top_indices:]
-                # x, y = np.unravel_index(top_indices, np.shape(scd))
-            
-                # f_top = f[x, y]
-                # alpha_top = alpha[x, y]
-            
-                # mask_1 = np.abs(alpha_top) > 0 + 1/(N)
-            
-                # mask_2 = np.abs(alpha_top) < 0.1 - 1/(N)
-            
-                # mask = mask_1 & mask_2
-            
-                # f_masked = f_top[mask]
-                # alpha_masked = alpha_top[mask]
 
                 if not conjugate:
                     mask_1 = np.abs(alpha) > 0 + 1/(N)
@@ -656,7 +648,7 @@ def rmse_window_test(scf_func, signal_length=4096, Np=64, fam=False, snr=0, conj
     samples_per_symbol = 10 # Symbol rate = 0.1 Hz
     cfo = 0.05
 
-    bpsk_signal = psk.create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
+    bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
     bpsk_signal_noise = add_awgn_snr(bpsk_signal, desired_snr=snr) # Add 1W AWGN
     bpsk_signal_noise_cfo = add_cfo(bpsk_signal_noise, cfo) # Add 0.5Hz CFO
 
@@ -681,7 +673,7 @@ def rmse_window_test(scf_func, signal_length=4096, Np=64, fam=False, snr=0, conj
     cycle_leakage_pts = np.zeros((no_of_windows, no_of_windows))
     rmse = np.zeros((no_of_windows, no_of_windows))
 
-    bpsk_signal = psk.create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
+    bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
     bpsk_signal_noise = add_awgn_snr(bpsk_signal, desired_snr=snr) # Add 1W AWGN
     bpsk_signal_noise_cfo = add_cfo(bpsk_signal_noise, cfo) # Add 0.5Hz CFO
     for i in range(len(all_windows)):
@@ -761,13 +753,13 @@ def window_test(scf_func, signal_length=4096, Np=64, conjugate=False, snr=0, num
     average_cycle_leakage = 0
 
     for i in range(number_of_runs):
-        bpsk_signal = pskcreate_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
+        bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
         bpsk_signal_cfo = add_cfo(bpsk_signal, 0.05) # Add 0.5Hz CFO
         bpsk_signal_cfo_noise = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr) # Add 1W AWGN
 
         test_signal = bpsk_signal_cfo_noise[:signal_length]
             
-        scd, f, alpha = scf_func(test_signal, Np, conjugate)
+        scd, f, alpha = scf_func(test_signal, Np=Np, conjugate=conjugate)
 
         if not conjugate:
             mask_1 = np.abs(alpha) > 0 + 1/(N)
@@ -784,18 +776,23 @@ def window_test(scf_func, signal_length=4096, Np=64, conjugate=False, snr=0, num
 
     return average_cycle_leakage
 
-def speed_test(python_file_name, plot=True):
-    !pytest python_file_name --benchmark-only --benchmark-save=run_np --benchmark-save-data --benchmark-disable-gc
+def speed_test(benchmark_filename, algorithm_name=['ssca', 'fam'], plot=True):
+    #!pytest python_file_name --benchmark-only --benchmark-save=run_np --benchmark-save-data --benchmark-disable-gc
 
+    import subprocess
     import json
     import pandas as pd
     import matplotlib.pyplot as plt
     import glob
+    import pytest
     import re # Import the regular expression module
+
+    result = subprocess.run(
+    ['pytest', benchmark_filename, '--benchmark-only', '--benchmark-save=speed_test', '--benchmark-save-data', '--benchmark-disable-gc', '--benchmark-min-rounds=50'])
     
     # Find and load the latest benchmark JSON file
     try:
-        latest_file = max(glob.glob('.benchmarks/*/*run_np*.json'))
+        latest_file = max(glob.glob('.benchmarks/*/*speed_test*.json'))
         print(f"Loading data from: {latest_file}")
         with open(latest_file, 'r') as f:
             data = json.load(f)
@@ -812,7 +809,7 @@ def speed_test(python_file_name, plot=True):
         # --- Data Processing for Line Plot ---
         
         # Function to extract algorithm and parameter size from the name
-        def parse_name(name):
+        def parse_name(name, algorithm=algorithm_name):
             # This regex looks for text between brackets, e.g., test_ssca[1000]
             match = re.search(r'\[(.*)\]', name)
             if not match:
@@ -821,15 +818,15 @@ def speed_test(python_file_name, plot=True):
             param = int(match.group(1)) # The parameter value (e.g., 1000)
             
             # Identify the algorithm
-            if 'ssca' in name:
-                algo = 'ssca'
-            elif 'fam' in name:
-                algo = 'fam'
-            else:
-                algo = 'unknown'
-                
+            for s in algorithm:
+                if s in name:
+                    algo = s
+                    return algo, param
+                else:
+                    algo = 'unknown'
+            
             return algo, param
-    
+            
         # Apply the function to create new columns
         df[['algorithm', 'np']] = df['name'].apply(parse_name).apply(pd.Series)
         
