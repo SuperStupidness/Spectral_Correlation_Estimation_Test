@@ -11,3 +11,10 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Figures and data
+data/
+fig/
+
+# Benchmark files
+.benchmark/
