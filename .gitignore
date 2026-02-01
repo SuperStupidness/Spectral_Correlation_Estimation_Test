@@ -18,3 +18,7 @@ fig/
 
 # Benchmark files
 .benchmarks/
+
+# PNG file and gif
+*.png 
+*.gif 
