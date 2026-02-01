@@ -17,4 +17,4 @@ data/
 fig/
 
 # Benchmark files
-.benchmark/
+.benchmarks/
