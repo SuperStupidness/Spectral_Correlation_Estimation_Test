@@ -5,6 +5,14 @@ from .psk import create_srrc_qpsk_signal, create_rect_bpsk_signal
 from .fsk import create_gmsk_signal
 import tracemalloc
 import pytest
+import subprocess
+import json
+import pandas as pd
+import matplotlib.pyplot as plt
+import glob
+import re # Import the regular expression module
+import time
+import os
 
 def add_awgn(signal, noise_power=0.1, db=False, rng=np.random.default_rng()):
     """
@@ -240,7 +248,7 @@ def calculate_bpsk_scf(number_of_points, alpha_slices, Tk, f_offset, conjugate=F
         
     return spectral_correlation
 
-def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20, no_of_run=1, conjugate=False, plot=True, save=True, fam=False):
+def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20, no_of_run=1, alpha_max = 1.0, conjugate=False, plot=True, save=True, fam=False):
     start_i = 10
     end_i = max_log_2 #17
     range_i = end_i - start_i
@@ -256,7 +264,7 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
     else:
         cycle_frequency_check = 1/(samples_per_symbol) * np.arange(1, 30);
     
-    cycle_frequency_check = np.round(cycle_frequency_check[np.abs(cycle_frequency_check) < 1], 2)
+    cycle_frequency_check = np.round(cycle_frequency_check[np.abs(cycle_frequency_check) < alpha_max], 2)
 
     scd_ref = calculate_bpsk_scf(max_length, cycle_frequency_check, samples_per_symbol, cfo, conjugate=conjugate)
 
@@ -294,8 +302,10 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
     
             alpha = np.round(alpha * N) / (N)
 
+            alpha_resolution = get_alpha_resolution(alpha) / 2
+
             for k in range(len(cycle_frequency_check)):
-                mask = np.abs(alpha - cycle_frequency_check[k]) < 1/(2*N)
+                mask = np.abs(alpha - cycle_frequency_check[k]) < alpha_resolution
                 scd_slice = spectral_corr[mask]
                 f_slice = f[mask]
                 f_index = np.rint(f_slice * max_length).astype(int)
@@ -569,7 +579,7 @@ def plot_roc_full(func_lambda, Np=8, no_of_simulation=1000, threshold_resolution
 
 from scipy.signal.windows import get_window
 
-def window_test(scf_func, name="algorithm_window_test", signal_length=4096, Np=64, fam=False, conjugate=False, snr=0, number_of_runs=20, plot=False):
+def window_test(scf_func, name="algorithm_window_test", signal_length=4096, Np=64, fam=False, conjugate=False, snr=0, number_of_runs=100, plot=False):
     number_of_symbols = int(signal_length/8)
     samples_per_symbol = 10 # Symbol rate = 0.1 Hz
 
@@ -776,93 +786,143 @@ def window_test(scf_func, signal_length=4096, Np=64, conjugate=False, snr=0, num
 
     return average_cycle_leakage
 
-def speed_test(benchmark_filename, algorithm_name=['ssca', 'fam'], plot=True):
-    #!pytest python_file_name --benchmark-only --benchmark-save=run_np --benchmark-save-data --benchmark-disable-gc
-
-    import subprocess
-    import json
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import glob
-    import pytest
-    import re # Import the regular expression module
-
+def run_benchmark(benchmark_filename, algorithm_name=['ssca', 'fam'], param_name='param'):
+    """
+    Run pytest benchmark and return processed DataFrame.
+    
+    Parameters
+    ----------
+    benchmark_filename : str
+        Path to the pytest file
+    algorithm_name : list
+        List of algorithm names to look for in test names
+    param_name : str
+        Name to give the parameter column (for clarity in DataFrame)
+    
+    Returns
+    -------
+    pd.DataFrame
+        Processed benchmark results
+    """
+    timestamp = int(time.time())
+    save_name = f'speed_test_{timestamp}'
+    
     result = subprocess.run(
-    ['pytest', benchmark_filename, '--benchmark-only', '--benchmark-save=speed_test', '--benchmark-save-data', '--benchmark-disable-gc', '--benchmark-min-rounds=50'])
+        ['pytest', benchmark_filename, '--benchmark-only', 
+         f'--benchmark-save={save_name}', '--benchmark-save-data', 
+         '--benchmark-disable-gc', '--benchmark-min-rounds=50'],
+        capture_output=True,
+        text=True
+    )
+    print(result.stdout)
     
-    # Find and load the latest benchmark JSON file
-    try:
-        latest_file = max(glob.glob('.benchmarks/*/*speed_test*.json'))
-        print(f"Loading data from: {latest_file}")
-        with open(latest_file, 'r') as f:
-            data = json.load(f)
-    except (ValueError, FileNotFoundError):
-        print("Benchmark file not found. Please run your pytest benchmark first.")
-        data = None
-    
-    if data:
-        # Convert to a DataFrame and expand the 'stats' column
-        df = pd.DataFrame(data['benchmarks'])
-        stats_df = df['stats'].apply(pd.Series)
-        df = pd.concat([df[['name', 'group']], stats_df], axis=1)
-    
-        # --- Data Processing for Line Plot ---
-        
-        # Function to extract algorithm and parameter size from the name
-        def parse_name(name, algorithm=algorithm_name):
-            # This regex looks for text between brackets, e.g., test_ssca[1000]
-            match = re.search(r'\[(.*)\]', name)
-            if not match:
-                return None, None
-            
-            param = int(match.group(1)) # The parameter value (e.g., 1000)
-            
-            # Identify the algorithm
-            for s in algorithm:
-                if s in name:
-                    algo = s
-                    return algo, param
-                else:
-                    algo = 'unknown'
-            
-            return algo, param
-            
-        # Apply the function to create new columns
-        df[['algorithm', 'np']] = df['name'].apply(parse_name).apply(pd.Series)
-        
-        # Drop rows that couldn't be parsed and sort the data
-        df.dropna(subset=['algorithm', 'np'], inplace=True)
-        df.sort_values(by='np', inplace=True)
-    
-        # Display the processed DataFrame
-        if plot:
-            print("\nProcessed DataFrame:")
-            print(df[['algorithm', 'np', 'mean', 'stddev']].head())
+    if result.returncode != 0:
+        print("STDERR:", result.stderr)
+        print("Pytest failed!")
+        return None
 
-    # Ensure the DataFrame 'df' from the previous step exists
-    if 'df' in locals() and not df.empty and plot:
-        plt.figure(figsize=(10, 6))
+    # Find the benchmark file
+    try:
+        matching_files = glob.glob(f'.benchmarks/**/*{save_name}*.json', recursive=True)
+        if not matching_files:
+            matching_files = glob.glob('.benchmarks/**/*.json', recursive=True)
         
-        # Plot a line for each algorithm
-        for algo_name in df['algorithm'].unique():
-            # Select the data for the current algorithm
-            subset = df[df['algorithm'] == algo_name]
-            
-            plt.errorbar(subset['np'], subset['mean'], marker='o', linestyle='-', label=algo_name, yerr=subset['stddev'], capsize=4)
+        if matching_files:
+            latest_file = max(matching_files, key=os.path.getmtime)
+            print(f"Loading data from: {latest_file}")
+            with open(latest_file, 'r') as f:
+                data = json.load(f)
+        else:
+            print("No benchmark files found!")
+            return None
+    except Exception as e:
+        print(f"Error loading benchmark file: {e}")
+        return None
+
+    # Convert to DataFrame
+    df = pd.DataFrame(data['benchmarks'])
+    stats_df = df['stats'].apply(pd.Series)
+    df = pd.concat([df[['name', 'group']], stats_df], axis=1)
+
+    # Parse test names
+    def parse_name(name):
+        match = re.search(r'\[(.*)\]', name)
+        if not match:
+            return None, None
+        
+        # Try to convert param to number, keep as string if not possible
+        param_str = match.group(1)
+        try:
+            param = float(param_str) if '.' in param_str else int(param_str)
+        except ValueError:
+            param = param_str
+        
+        # Identify the algorithm
+        for algo in algorithm_name:
+            if algo in name:
+                return algo, param
+        
+        return 'unknown', param
+
+    df[['algorithm', param_name]] = df['name'].apply(parse_name).apply(pd.Series)
+    df.dropna(subset=['algorithm', param_name], inplace=True)
+    df.sort_values(by=param_name, inplace=True)
     
-        # Add labels and title
-        plt.xlabel('Np size')
-        plt.ylabel('Mean Execution Time (seconds)')
-        plt.title('SSCA vs. FAM Performance Comparison (N=32768)')
-        
-        # Optional: Use a logarithmic scale if times vary widely
+    return df
+
+
+def plot_benchmark(df, param_name='param', title=None, xlabel=None, 
+                   log_x=True, log_y=True, figsize=(6, 4), save_path=None):
+    """
+    Plot benchmark results.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame from run_benchmark()
+    param_name : str
+        Column name for x-axis parameter
+    title : str, optional
+        Plot title
+    xlabel : str, optional
+        X-axis label (defaults to param_name)
+    log_x, log_y : bool
+        Whether to use log scale
+    figsize : tuple
+        Figure size
+    save_path : str, optional
+        Path to save figure
+    """
+    if df is None or df.empty:
+        print("No data to plot!")
+        return
+    
+    plt.figure(figsize=figsize)
+    
+    for algo_name in df['algorithm'].unique():
+        subset = df[df['algorithm'] == algo_name]
+        plt.errorbar(subset[param_name], subset['mean'], 
+                     marker='o', linestyle='-', label=algo_name, 
+                     yerr=subset['stddev'], capsize=4)
+
+    plt.xlabel(xlabel or param_name)
+    plt.ylabel('Mean Execution Time (seconds)')
+    plt.title(title or 'Benchmark Comparison')
+    
+    if log_x:
         plt.xscale('log', base=2)
+    if log_y:
         plt.yscale('log', base=2)
-        
-        plt.grid(True, which="both", ls="--")
-        plt.legend() # Show the legend with algorithm names
-        plt.tight_layout()
-        plt.show()
+    
+    plt.grid(True, which="both", ls="--")
+    plt.legend()
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path)
+        print(f"Figure saved to: {save_path}")
+    
+    plt.show()
 
 def memory_test(func_lambda, name="algorithm", Np=8, max_log_2=18, no_of_run=20, plot=True):
     start_i = 10
@@ -907,3 +967,22 @@ def memory_test(func_lambda, name="algorithm", Np=8, max_log_2=18, no_of_run=20,
 
 
     return average_peak_usage, standard_deviation, signal_length
+
+def get_alpha_resolution(alpha):
+    """
+    Get the actual cyclic frequency resolution from the alpha vector.
+    
+    Parameters
+    ----------
+    alpha : ndarray
+        Vector of cyclic frequencies.
+    
+    Returns
+    -------
+    delta_alpha : float
+        Cyclic frequency resolution.
+    """
+    # Handle both sorted and fftshifted alpha vectors
+    alpha_sorted = np.sort(alpha)
+    delta_alpha = np.median(np.diff(alpha_sorted))
+    return delta_alpha

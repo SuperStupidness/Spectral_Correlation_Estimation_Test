@@ -1,2 +1,11 @@
-# Spectral_Correlation_Estimation_Test
-Python functions to benchmark your Spectral Correlation Estimation Function. It also contains the python implementation of SSCA and FAM as an example.
+# Spectral Correlation Estimation Algorithm Tests !
+
+4 main tests:
+- Validation/Accuracy ---> validation_test_example
+- Cycle Leakage Test ---> cycle_leakage_test_example
+- Speed and Memory ---> speed_memory_test_example
+- Performance (Cycle Frequency Detection) --> roc_test_example
+
+Extra Functions:
+- Cyclic Domain Plot for Validation
+- Extended Test for finding optimal parameters (N, Np, Windowing function)
