@@ -22,3 +22,6 @@ fig/
 # PNG file and gif
 *.png 
 *.gif 
+
+# Examples ipynb (practice)
+Examples.ipynb

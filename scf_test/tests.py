@@ -829,7 +829,7 @@ def window_test(scf_func, name="algorithm", signal_length=4096, Np=64, L=16,  co
     if plot:
         fig = plt.figure(figsize=(5, 3))
         plt.plot(snr, average_cycle_leakage, 'x--')
-        plt.title(f"{name} Cycle Leakage Test: average cycle leakage magnitude {np.mean(average_cycle_leakage): .3f}")
+        plt.title(f"{name} Cycle Leakage Test: Average cycle leakage magnitude {np.mean(average_cycle_leakage): .3f}")
         plt.xlabel("SNR (dB)")
         plt.ylabel("Magnitude")
         plt.show()
