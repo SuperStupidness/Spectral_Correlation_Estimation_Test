@@ -13,15 +13,14 @@ __pycache__/
 Thumbs.db
 
 # Figures and data
-data/
-fig/
+data/*
+fig/*
 
 # Benchmark files
 .benchmarks/
 
 # PNG file and gif
 *.png 
-*.gif 
 
 # Examples ipynb (practice)
 Examples.ipynb

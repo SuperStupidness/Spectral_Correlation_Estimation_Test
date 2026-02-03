@@ -278,7 +278,7 @@ def extended_validation_test(func_lambda, name="algorithm", np_arr=2**np.arange(
         ax.set_xscale('log', base=2)
         ax.set_xlabel('Window Size')
         ax.set_ylabel('Signal Length')
-        fig.colorbar(im, label='RMSE')
+        fig.colorbar(im, ax=ax, label='RMSE')
 
         min_marker, = ax.plot([], [], 'x', mfc='none', mec='red', mew=2, markersize=12)
 
@@ -307,7 +307,7 @@ def extended_validation_test(func_lambda, name="algorithm", np_arr=2**np.arange(
         ani = animation.FuncAnimation(fig, update, frames=11, interval=750, blit=True)
 
         if save:
-            ani.save(f'{name}_rmse_animation.gif', writer='Pillow') # Or 'ffmpeg' for mp4
+            ani.save(f'{name}_rmse_animation.gif', writer='imagemagick') # Or 'ffmpeg' for mp4
 
         plt.show()
 
