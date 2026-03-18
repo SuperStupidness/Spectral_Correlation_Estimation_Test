@@ -3,7 +3,7 @@ import numpy as np
 from algorithm import ssca, fam, Fast_SC
 
 
-N = 2**15 #32768
+N = 4096 
 
 @pytest.mark.parametrize("Np", [
     (8),

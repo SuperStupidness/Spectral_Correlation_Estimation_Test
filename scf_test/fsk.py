@@ -67,3 +67,60 @@ def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT
         plot_fsk_signal(gmsk_signal, gmsk_symbols, phi_of_t, delta_f, f_carrier, f"GMSK signal with Bandwidth-Time product = {BT}, f_c={f_carrier}")
     
     return gmsk_signal, gmsk_symbols, phi_of_t
+
+def create_cpfsk_signal(number_of_symbols, samples_per_symbol, modulation_index=0.5, f_carrier=0.05, plot=False, rng=np.random.default_rng()):
+    """
+    Generate a Continuous Phase (Binary) FSK (CPFSK) signal.
+    
+    Parameters:
+    -----------
+    number_of_symbols : array_like
+        Total number of symbols in the signal
+    samples_per_symbol : int
+        Number of samples per symbol (symbol period)
+    modulation_index : float
+        Modulation index (h), determines frequency deviation (default is 0.5)
+    f_carrier : float, optional
+       Carrier frequency (normalized to sampling frequency (default is 0.05) 
+    plot : bool, optional
+       Whether to plot the signal components (default is False)
+    rng : numpy.random.Generator, optional
+       Random number generator for symbol generation (default is numpy's default RNG)
+
+    Returns:
+    --------
+    tuple
+        (cpfsk_signal, cpfsk_signal, instantaneous_phase)
+    """
+    
+    if number_of_symbols <= 0:
+        raise ValueError("Error: Number of symbols must be postive and non zero")
+    elif samples_per_symbol <= 0:
+        raise ValueError("Error: Samples per symbol must be postive and non zero")
+    elif modulation_index < 0:
+        raise ValueError("Error: Modulation index must be larger than 0")
+    elif not isinstance(samples_per_symbol, int):
+        raise TypeError("Error: Samples per symbol must be an integer")
+    elif not isinstance(number_of_symbols, int):
+        raise TypeError("Error: Number of symbols must be an integer")
+        
+    n = number_of_symbols * samples_per_symbol
+    t = np.linspace(0, n, n)
+
+    bit_seq = rng.integers(0, 2, number_of_symbols)
+    FSK_symbol = np.repeat((-1)**bit_seq, samples_per_symbol)
+    delta_f = 1/(2*samples_per_symbol) * modulation_index
+
+    theta = np.zeros(len(FSK_symbol))
+
+    theta[1:] = 2*np.pi * np.cumsum(delta_f*FSK_symbol[:-1]) 
+
+    phi_of_t = 2*np.pi*f_carrier * t + theta
+
+    cpfsk_signal = np.exp(1j * phi_of_t)
+    cpfsk_symbols = FSK_symbol
+
+    if plot:
+        plot_fsk_signal(cpfsk_signal, cpfsk_symbols, phi_of_t, delta_f, f_carrier, f"Continuous Phase FSK modulation index={modulation_index}, f_c={f_carrier}")
+    
+    return cpfsk_signal, cpfsk_symbols, phi_of_t

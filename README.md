@@ -7,5 +7,6 @@
 - Performance (Cycle Frequency Detection) --> roc_test_example
 
 Extra Functions:
-- Cyclic Domain Plot for Validation
-- Extended Test for finding optimal parameters (N, Np, Windowing function)
+- Cyclic Domain Plot for Extra Validation
+- Spectral Coherence Validation
+- Spectral Coherence Cycle Leakage Test
