@@ -301,13 +301,13 @@ def extended_validation_test(func_lambda, name="algorithm", np_arr=2**np.arange(
 
             # Update the title
             ax.set_title(f'{name} RMSE Heatmap, SNR = {frame}dB, min={min_rmse}')
-            return im,
+            return im
 
         # Create and save the animation
         ani = animation.FuncAnimation(fig, update, frames=11, interval=750, blit=True)
 
         if save:
-            ani.save(f'{name}_rmse_animation.gif', writer='imagemagick') # Or 'ffmpeg' for mp4
+            ani.save(f'{name}_rmse_animation.mp4', writer='ffmpeg') # Or 'ffmpeg' for mp4
 
         plt.show()
 
@@ -1247,7 +1247,7 @@ def coherence_validation_test(func_lambda, name="algorithm", Np=512, snr=10, max
     end_i = max_log_2 
     range_i = end_i - start_i
     
-    samples_per_symbol = 10 # Symbol rate = 0.20 Hz
+    samples_per_symbol = 10 # Symbol rate = 0.10 Hz
     cfo = 0.05
 
     max_no_of_symbols = 2**(end_i-1); #65536 samples
@@ -1284,9 +1284,9 @@ def coherence_validation_test(func_lambda, name="algorithm", Np=512, snr=10, max
         for j in range(no_of_run):
             rng=np.random.default_rng()
             # Noise first then add cfo
-            bpsk_signal = test.create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
-            bpsk_signal_cfo = test.add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
-            bpsk_signal_noise_cfo = test.add_awgn_snr(bpsk_signal_cfo, desired_snr=snr, rng=rng)
+            bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
+            bpsk_signal_cfo = add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
+            bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr, rng=rng)
             bpsk_signal_noise_cfo = bpsk_signal_noise_cfo[:N]
 
             if fam:
@@ -1336,50 +1336,138 @@ def coherence_validation_test(func_lambda, name="algorithm", Np=512, snr=10, max
 
     return scd_rmse, signal_length
 
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+
 def plot_cyclic_domain_profile(spectral_coherence, f, alpha, conjugate=False, plot=True):
-    spectral_coherence = spectral_coherence.copy()
+    # N is assumed to be the signal/block length based on standard SSCA
     N = spectral_coherence.shape[1]
 
-    if not conjugate:
-        mask = np.abs(alpha) < 1 / (2 * N)
-        spectral_coherence[mask] = 0
-
-    # Bin alpha to uniform grid
-    alpha_binned = np.round(alpha * N) / N
-
-    # Convert to integer indices: alpha_binned * N gives integers from -N to N
-    alpha_int = np.round(alpha_binned.ravel() * N).astype(int)
+    # 1. Direct integer conversion (Avoids redundant float64 array allocations)
+    # Replaces: alpha_binned = np.round(alpha * N) / N ... etc.
+    alpha_int = np.round(alpha.ravel() * N).astype(int)
     sc_flat = spectral_coherence.ravel()
 
-    # Shift so indices start at 0: range [-N, N] -> [0, 2N]
-    offset = int(np.min(alpha_int))
-    alpha_shifted = alpha_int - offset
-    num_bins = int(np.max(alpha_shifted)) + 1
+    # 2. Early Filtering (Massive speedup)
+    # If we don't need negative alphas, drop them BEFORE the expensive np.maximum.at
+    if not conjugate:
+        mask = alpha_int >= 0  # Equivalent to > -1/N in the original code
+        alpha_int = alpha_int[mask]
+        sc_flat = sc_flat[mask]
 
-    # Direct scatter — now maximum.at is fast because the output array is small
+    # 3. Shift indices to start at 0
+    offset = alpha_int.min()
+    alpha_shifted = alpha_int - offset
+    num_bins = alpha_shifted.max() + 1
+
+    # 4. Unbuffered maximum aggregation
     cdp = np.full(num_bins, -np.inf)
     np.maximum.at(cdp, alpha_shifted, sc_flat)
 
-    # Build the corresponding alpha grid
+    # 5. Build the alpha grid and remove empty bins
     cycle_frequency = (np.arange(num_bins) + offset) / N
-
-    # Remove empty bins
+    
     valid = cdp > -np.inf
     cycle_frequency = cycle_frequency[valid]
     cdp = cdp[valid]
 
-    # Filter negative alphas for non-conjugate
-    if not conjugate:
-        keep = cycle_frequency > -1 / N
-        cycle_frequency = cycle_frequency[keep]
-        cdp = cdp[keep]
-
+    # 6. Plotting
     if plot:
-        title = "Conjugate" if conjugate else "Non Conjugate"
-        fig = plt.figure(figsize=(7,3))
+        title = "Conjugate" if conjugate else "Non-Conjugate"
+        fig = plt.figure(figsize=(7, 3))
         plt.title("Cyclic Domain Profile")
         plt.xlabel(f"{title} Cycle Frequency (Hz)")
         plt.ylabel("Maximum over frequency")
         plt.stem(cycle_frequency, cdp)
 
     return cycle_frequency, cdp
+
+def cyclic_domain_profile_test(func_lambda, Np=64, L=16, snr=10, conjugate=False, plot=True, fam=False, tolerance_bins=2, threshold=0.2):
+    samples_per_symbol = 10 # Symbol rate = 0.10 Hz
+    cfo = 0.05
+    number_of_symbols = 4000
+
+    bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
+    bpsk_signal_cfo = add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
+    bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr)
+
+    N = len(bpsk_signal_noise_cfo)
+
+    if fam:
+        spectral_coherence, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, L=L, conjugate=conjugate, coherence=True)
+    else:
+        spectral_coherence, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate, coherence=True)
+
+    cf, cdp = plot_cyclic_domain_profile(spectral_coherence, f, alpha, conjugate=conjugate, plot=False)
+
+    # Pad cdp so find_peaks can check boundary value
+    cdp = np.pad(cdp, 1)
+
+    # 2. Find peaks
+    # 'distance' prevents finding multiple peaks on the skirts of one wide peak
+    peak_indices, properties = find_peaks(cdp, height=threshold, distance=3)
+    detected_alphas = cf[peak_indices]
+    detected_heights = properties['peak_heights']
+
+    # 3. Generate Expected Peaks (Harmonics of the symbol rate)
+    max_alpha = np.max(cf)
+    min_alpha = np.min(cf)
+    f_sym = 1/samples_per_symbol
+    if conjugate:
+        expected_alphas = np.arange(-1, 1, f_sym) + 2*cfo
+    else:
+        expected_alphas = np.arange(0, 1, f_sym)
+    # Filter expected alphas to only those strictly within our axis limits
+    expected_alphas = expected_alphas[(expected_alphas <= max_alpha) & (expected_alphas >= min_alpha)]
+
+    # 4. Cross-Validation
+    alpha_resolution = 1 / N
+    tolerance = tolerance_bins * alpha_resolution
+    
+    missing_peaks = []
+    erroneous_peaks = []
+
+    # Check for missing expected peaks
+    for expected in expected_alphas:
+        # Is there any detected peak within the tolerance of the expected frequency?
+        matches = np.abs(detected_alphas - expected) <= tolerance
+        if not np.any(matches):
+            missing_peaks.append(expected)
+
+    # Check for erroneous detected peaks
+    for detected in detected_alphas:
+        # Does this detected peak match any expected frequency?
+        matches = np.abs(expected_alphas - detected) <= tolerance
+        if not np.any(matches):
+            erroneous_peaks.append(detected)
+
+    # Reverse the padding
+    cdp = cdp[1:-1] 
+
+    # 5. Optional Plotting for debugging
+    if plot:
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(8, 4))
+        plt.plot(cf, cdp, label="CDP")
+        plt.axhline(threshold, color='r', linestyle='--', label="Threshold")
+        plt.plot(detected_alphas, detected_heights, "x", color='k', markersize=8, label="Detected Peaks")
+        for ea in expected_alphas:
+            plt.axvline(ea, color='g', linestyle=':', alpha=0.5)
+        plt.title("Automated Peak Detection on Cylic Domain Profile Test")
+        plt.xlabel("Cycle Frequency (Hz)")
+        plt.legend()
+        plt.show()
+
+    # 6. Test Assertion Logic
+    passed = len(missing_peaks) == 0 and len(erroneous_peaks) == 0
+    
+    return passed, {
+        "detected_alphas": detected_alphas,
+        "missing_peaks": missing_peaks,
+        "erroneous_peaks": erroneous_peaks,
+        "threshold_used": threshold
+    }
+    
+    
+
