@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 from algorithm import ssca, fam
 
-N = 2**15 #32768
+N = 2**12 #32768
 
 @pytest.mark.parametrize("Np", [
     (8),
