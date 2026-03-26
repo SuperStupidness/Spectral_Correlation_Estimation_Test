@@ -95,58 +95,6 @@ def add_cfo(signal, cfo):
     signal_cfo = signal * np.exp(1j*2*np.pi*cfo*np.arange(0,len(signal)))
     return signal_cfo
 
-def calculate_bpsk_scf(number_of_points, alpha_slices, Tk, f_offset, conjugate=False, plot=False):
-    """
-    Calculates the theoretical Spectral Correlation Function (SCF) for a baseband
-    BPSK signal with rectangular pulse shaping and a carrier frequency offset.
-
-    The SCF of a signal with a frequency offset is the original SCF shifted in
-    the frequency domain: S_new(f, α) = S_original(f - f_offset, α).
-
-    Args:
-        f_grid (ndarray): 2D meshgrid of frequencies.
-        alpha_grid (ndarray): 2D meshgrid of cyclic frequencies.
-        Tk (float): The symbol period in samples.
-        f_offset (float): The carrier frequency offset.
-
-    Returns:
-        ndarray: 2D array containing the magnitude of the SCF.
-    """
-
-    f_axis = np.linspace(-1 / 2, 1 / 2, number_of_points)
-
-    # Create a 2D meshgrid to calculate the SCF over the entire f-α plane
-    f_grid, alpha_grid = np.meshgrid(f_axis, alpha_slices)
-
-    # Apply the frequency offset to the entire frequency grid
-    f_shifted_grid = f_grid - f_offset
-    
-    # np.sinc(x) is defined as sin(pi*x)/(pi*x)
-    if conjugate:
-        term1 = Tk * np.sinc((f_shifted_grid + alpha_grid/2) * Tk)
-        term2 = Tk * np.sinc((alpha_grid/2 - f_grid - f_offset) * Tk)
-        significant_slices = 1/Tk * np.arange(-20, 20) + 2*f_offset; 
-    else:
-        term1 = Tk * np.sinc((f_shifted_grid + alpha_grid/2) * Tk)
-        term2 = Tk * np.sinc((f_shifted_grid - alpha_grid/2) * Tk)
-        significant_slices = 1/Tk * np.arange(-20, 20);
-
-    significant_slices = np.round(significant_slices[np.abs(significant_slices) < 1], 4)
-    
-    spectral_correlation = 1/Tk * np.abs(term1 * term2) # 1/Tk scaling to get accurate PSD
-
-    # 1. Create a boolean mask. 
-    #    It's True for any alpha_slice that is NOT in significant_slices.
-    #    We round alpha_slices to 2 decimal places to ensure a reliable 
-    #    comparison against the already-rounded significant_slices.
-    is_not_significant_mask = ~np.isin(np.round(alpha_slices, 4), significant_slices)
-    
-    # 2. Use this mask to set the non-significant rows to zero.
-    #    NumPy will select all rows where the mask is True and set their values to 0.
-    spectral_correlation[is_not_significant_mask, :] = 0  
-        
-    return spectral_correlation
-
 def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20, no_of_run=1, alpha_max = 1.0, conjugate=False, plot=True, save=True, fam=False):
     start_i = 10 # or 1024 (change if you want higher Np)
     end_i = max_log_2 

@@ -23,16 +23,46 @@ Extra Functions:
 
 The FFT Accumulation Method (FAM) algorithm using high mainlobe windows like flattop needs L = Np/8 instead of the recommended L = Np/4 to avoid cycle leakage.
 
-(image here)
-
-(image here)
+## Updates
 
 ## Gallery
 
-(To be done)
+*Validation*
 
-## Updates
+![SSCA Validation](/fig/ssca_validation_1024.png)
+![SSCA Validation](/fig/ssca_validation_8192.png)
+![SSCA Validation](/fig/ssca_validation_65536.png)
+![SSCA Validation](/fig/ssca_validation_524288.png)
+
+*Cycle Leakage Test*
+
+![SSCA Cycle Leakage](/fig/ssca_cycle_leakage_test.png)
+
+*Speed and Memory*
+
+![Speed Test](/fig/all_algo_benchmark.png)
+![Memory Test](/fig/memory_test.png)
+
+*Performance Test*
 
 
+*Coherence Validation*
+
+![SSCA Coherence Validation](/fig/ssca_coh_validation_1024.png)
+![SSCA Coherence Validation](/fig/ssca_coh_validation_8192.png)
+![SSCA Coherence Validation](/fig/ssca_coh_validation_65536.png)
+![SSCA Coherence Validation](/fig/ssca_coh_validation_262144.png)
+
+*Cyclic Domain Profile Test*
+
+![SSCA CDP](/fig/cdp_test.png)
+
+*Window Test (Extended Cycle Leakage Test)*
+
+![SSCA Window Test](/fig/ssca_window_test.png)
+
+*Extended Validation Test*
+
+![SSCA Extended Validation](/fig/ssca_extended_validation_test.png)
 
 
