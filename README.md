@@ -10,7 +10,7 @@ Extra Functions:
 - Cyclic Domain Plot for Extra Validation
 - Spectral Coherence Validation
 
-## Recommended Usage
+## Recommended Usage Order
 1. Validation (including coherence and cyclic domain profile)
 
 2. Speed and Memory test
@@ -24,6 +24,10 @@ Extra Functions:
 The FFT Accumulation Method (FAM) algorithm using high mainlobe windows like flattop needs L = Np/8 instead of the recommended L = Np/4 to avoid cycle leakage.
 
 ## Updates
+
+26/03/2026:
+
+- Update README with gallery
 
 ## Gallery
 
