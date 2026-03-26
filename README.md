@@ -44,6 +44,7 @@ The FFT Accumulation Method (FAM) algorithm using high mainlobe windows like fla
 ![Memory Test](/fig/memory_test.png)
 
 *Performance Test*
+
 ![Performance Test](/fig/ssca_roc_test.png)
 
 *Coherence Validation*
