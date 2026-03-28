@@ -23,7 +23,7 @@ Extra Functions:
 
 The FFT Accumulation Method (FAM) algorithm using high mainlobe windows like flattop needs L = Np/8 instead of the recommended L = Np/4 to avoid cycle leakage.
 
-FastSC python implementation is from: [[https://github.com](https://github.com/rodrigoel/RBFastSC)](https://github.com/rodrigoel/RBFastSC)
+FastSC python implementation is from: [RBFastSC](https://github.com/rodrigoel/RBFastSC) by Rodrigo Emanoel de Britto Andrade Barros
 
 ## Updates
 
