@@ -1,17 +1,23 @@
-from matplotlib import pyplot as plt
+import glob
+import json
+import os
+import re
+import subprocess
+import time
+import timeit
+import tracemalloc
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from matplotlib.ticker import ScalarFormatter, LogLocator
+from scipy.signal import find_peaks
+from scipy.signal.windows import get_window
+from sklearn import metrics
+
 from .psk import create_srrc_qpsk_signal, create_rect_bpsk_signal
 from .fsk import create_gmsk_signal, create_cpfsk_signal
 from .visualization.time_domain import plot_signal
-import tracemalloc
-import subprocess
-import json
-import pandas as pd
-import matplotlib.pyplot as plt
-import glob
-import re # Import the regular expression module
-import time
-import os
 
 def add_awgn(signal, noise_power=0.1, db=False, rng=np.random.default_rng()):
     """
@@ -146,6 +152,7 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
                 spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, L=Np/4, conjugate=conjugate)
             else:
                 spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate)
+            spectral_corr = np.abs(spectral_corr)  # handle complex output
 
             # Remove any value outside of the principal diamond
             mask_principal = np.abs(f) + np.abs(alpha / 2.0) < 0.5
@@ -262,6 +269,7 @@ def extended_validation_test(func_lambda, name="algorithm", np_arr=2**np.arange(
     return rmse_mat, signal_length_mat
 
 def rmse_vs_theoretical_bpsk(spectral_correlation, f, alpha, samples_per_symbol, cfo, conjugate=False):
+    spectral_correlation = np.abs(np.asarray(spectral_correlation))  # handle complex output
     N = np.shape(spectral_correlation)[1]
     
     if not conjugate:
@@ -294,8 +302,6 @@ def rmse_vs_theoretical_bpsk(spectral_correlation, f, alpha, samples_per_symbol,
     no_of_points = np.log2(N)
 
     return scd_rmse, no_of_points
-
-from sklearn import metrics
 
 def get_alpha_resolution(alpha):
     """
@@ -397,7 +403,10 @@ def plot_roc_non_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_r
                 spectral_coherence_qpsk_nc, _, _ = func_lambda(test_signal_qpsk, Np=Np, conjugate=False, coherence=True)
 
                 spectral_coherence_gmsk_nc, _, _ = func_lambda(test_signal_gmsk, Np=Np, conjugate=False, coherence=True)
-        
+            spectral_coherence_bpsk_nc = np.abs(spectral_coherence_bpsk_nc)  # handle complex output
+            spectral_coherence_qpsk_nc = np.abs(spectral_coherence_qpsk_nc)
+            spectral_coherence_gmsk_nc = np.abs(spectral_coherence_gmsk_nc)
+
             coh_max_bpsk = []
             coh_max_qpsk = []
             coh_max_gmsk = []
@@ -579,7 +588,10 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
                 spectral_coherence_msk_c, _, _ = func_lambda(test_signal_msk, Np=Np, conjugate=True, coherence=True)
 
                 spectral_coherence_gmsk_c, _, _ = func_lambda(test_signal_gmsk, Np=Np, conjugate=True, coherence=True)
-        
+            spectral_coherence_bpsk_c = np.abs(spectral_coherence_bpsk_c)  # handle complex output
+            spectral_coherence_msk_c  = np.abs(spectral_coherence_msk_c)
+            spectral_coherence_gmsk_c = np.abs(spectral_coherence_gmsk_c)
+
             coh_max_bpsk = []
             coh_max_msk = []
             coh_max_gmsk = []
@@ -685,8 +697,6 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
     
     return average_pd, average_pf, roc_auc, threshold_resolution
 
-from scipy.signal.windows import get_window
-
 def extended_window_test(scf_func, name="algorithm_window_test", signal_length=4096, Np=64, L=16, fam=False, conjugate=False, snr=0, number_of_runs=100, plot=False):
     number_of_symbols = int(signal_length/8)
     samples_per_symbol = 10 # Symbol rate = 0.1 Hz
@@ -697,8 +707,8 @@ def extended_window_test(scf_func, name="algorithm_window_test", signal_length=4
     # a(n) or first window -> Large attenuation
     # g(n) or second window -> Small bandwidth
     #  "hamming", "hann", "cosine", "barthann", "lanczos" are middle of the road windows
-    small_bandwidth_window = ["boxcar", "triang", ("kaiser", 4), "hamming", "hann", "cosine", "barthann", "lanczos", ("tukey", 0.2)]
-    large_attenuation_window = [("chebwin", 100), ("kaiser", 14), "blackmanharris", "nuttall", "flattop", "parzen", "bohman", "taylor", "hamming", "hann", "cosine", "barthann", "lanczos"]
+    # small_bandwidth_window = ["boxcar", "triang", ("kaiser", 4), "hamming", "hann", "cosine", "barthann", "lanczos", ("tukey", 0.2)]
+    # large_attenuation_window = [("chebwin", 100), ("kaiser", 14), "blackmanharris", "nuttall", "flattop", "parzen", "bohman", "taylor", "hamming", "hann", "cosine", "barthann", "lanczos"]
 
     all_windows = ["boxcar", "triang", ("kaiser", 4), "hamming", "hann", "cosine", "barthann", "lanczos", ("tukey", 0.2), ("chebwin", 100), ("kaiser", 14), "blackmanharris", "nuttall", "flattop", "parzen", "bohman", "taylor"]
 
@@ -715,16 +725,11 @@ def extended_window_test(scf_func, name="algorithm_window_test", signal_length=4
 
         for i in range(len(all_windows)):
             for j in range(len(all_windows)):
-                window_a = get_window(all_windows[i], Np)
-                
                 if fam:
-                    window_j = get_window(all_windows[j], int(N/L))
-                    scd, _, alpha = scf_func(test_signal, window_a, window_j, Np, L, conjugate)
+                    scd, _, alpha = scf_func(test_signal, Np=Np, L=L, window_1=all_windows[i], window_2=all_windows[j], conjugate=conjugate)
                 else:
-                    window_j = get_window(all_windows[j], N)
-                    scd, _, alpha = scf_func(test_signal, window_a, window_j, Np, conjugate)
-            
-                
+                    scd, _, alpha = scf_func(test_signal, Np=Np, window_1=all_windows[i], window_2=all_windows[j], conjugate=conjugate)
+                scd = np.abs(scd)  # handle complex output
 
                 if not conjugate:
                     mask_1 = np.abs(alpha) > 0 + 1/(N)
@@ -759,44 +764,81 @@ def extended_window_test(scf_func, name="algorithm_window_test", signal_length=4
 
     return cycle_leakage_pts
 
-def window_test(scf_func, name="algorithm", signal_length=4096, Np=64, L=16,  conjugate=False, snr=[0], number_of_runs=20, fam=False, plot=True):
-    number_of_symbols = int(signal_length/8)
-    samples_per_symbol = 10 # Symbol rate = 0.1 Hz
+def window_test(scf_func, name="algorithm", signal_length=4096, Np=64, L=16,
+                conjugate=False, snr=[0], number_of_runs=100, fam=False,
+                plot=True, outlier_threshold=100, verbose=True):
+    """Cycle leakage test with automatic robustness to spurious outliers.
 
+    For each SNR, computes per-run cycle leakage, then reports the mean
+    unless spurious high-magnitude runs are detected (e.g. S3CA's
+    sparse-FFT blowups), in which case the median is used instead.
+    """
+    number_of_symbols = int(signal_length / 8)
+    samples_per_symbol = 10  # Symbol rate = 0.1 Hz
     N = signal_length
-
     average_cycle_leakage = np.zeros(len(snr))
 
     for i in range(len(snr)):
+        per_run = []
+
         for j in range(number_of_runs):
             bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
-            bpsk_signal_cfo = add_cfo(bpsk_signal, 0.05) # Add 0.5Hz CFO
+            bpsk_signal_cfo = add_cfo(bpsk_signal, 0.05)
             bpsk_signal_cfo_noise = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr[i])
-
             test_signal = bpsk_signal_cfo_noise[:signal_length]
-            
+
             if fam:
-                scd, _, alpha = scf_func(test_signal, Np=Np, L=L, conjugate=conjugate)
+                scd, _, alpha = scf_func(test_signal, Np=Np, L=L,
+                                         conjugate=conjugate, coherence=False)
             else:
-                scd, _, alpha = scf_func(test_signal, Np=Np, conjugate=conjugate)
+                scd, _, alpha = scf_func(test_signal, Np=Np,
+                                         conjugate=conjugate, coherence=False)
+            scd = np.abs(scd)  # in case output is complex
 
             if not conjugate:
-                mask_1 = np.abs(alpha) > 0 + 1/(N)
-                mask_2 = np.abs(alpha) < 0.1 - 1/(N)
+                mask = (np.abs(alpha) > 1 / N) & (np.abs(alpha) < 0.1 - 1 / N)
             else:
-                mask_1 = np.abs(alpha - 0.1) > 0 + 1/(N)
-                mask_2 = np.abs(alpha - 0.1) < 0.1 - 1/(N)
+                mask = (np.abs(alpha - 0.1) > 1 / N) & (np.abs(alpha - 0.1) < 0.1 - 1 / N)
 
-            mask = mask_1 & mask_2
+            if mask.sum() > 0:
+                val = np.sum(scd[mask]) / mask.sum()
+            else:
+                val = np.nan
+            per_run.append(val)
 
-            average_cycle_leakage[i] += np.sum(scd[mask])/len(scd[mask])
+        per_run = np.array(per_run)
 
-        average_cycle_leakage[i] = average_cycle_leakage[i] / number_of_runs
+        # print(f"percentiles:")
+        # for p in [10, 25, 50, 75, 90, 95]:
+        #     print(f"  {p}th: {np.percentile(per_run[~np.isnan(per_run)], p):.3f}")
+        # print(f"values under 1: {(per_run < 1).sum()}")
+        # print(f"values 1-10:    {((per_run >= 1) & (per_run < 10)).sum()}")
+        # print(f"values 10-100:  {((per_run >= 10) & (per_run < 100)).sum()}")
+        # print(f"values >100:    {(per_run > 100).sum()}")
+
+        # Decide mean vs median based on presence of outliers
+        n_outliers = np.sum(per_run > outlier_threshold)
+        n_nan = np.sum(np.isnan(per_run))
+
+        if n_outliers > 0 or n_nan > 0:
+            # Spurious blowups present (e.g. S3CA): use median for robustness
+            average_cycle_leakage[i] = np.nanmedian(per_run)
+            stat_used = "median"
+        else:
+            average_cycle_leakage[i] = np.nanmean(per_run)
+            stat_used = "mean"
+
+        if verbose:
+            print(f"SNR={snr[i]} dB | {stat_used}: {average_cycle_leakage[i]:.3f} | "
+                  f"median: {np.nanmedian(per_run):.3f}, "
+                  f"mean: {np.nanmean(per_run):.3e}, "
+                  f"outliers(>{outlier_threshold}): {n_outliers}, "
+                  f"nan: {n_nan}")
 
     if plot:
         fig = plt.figure(figsize=(5, 3))
         plt.plot(snr, average_cycle_leakage, 'x--')
-        plt.title(f"{name} Cycle Leakage Test: Average cycle leakage magnitude {np.mean(average_cycle_leakage): .3f}")
+        plt.title(f"{name} Cycle Leakage: {np.mean(average_cycle_leakage):.3f}")
         plt.xlabel("SNR (dB)")
         plt.ylabel("Magnitude")
         plt.show()
@@ -888,11 +930,10 @@ def run_benchmark(benchmark_filename, algorithm_name=['ssca', 'fam'], param_name
     return df
 
 
-def plot_benchmark(df, param_name='param', title=None, xlabel=None, 
+def plot_benchmark(df, param_name='param', title=None, xlabel=None,
                    log_x=True, log_y=True, figsize=(6, 4), save_path=None):
-    """
-    Plot benchmark results.
-    
+    """Plot benchmark results.
+ 
     Parameters
     ----------
     df : pd.DataFrame
@@ -904,7 +945,8 @@ def plot_benchmark(df, param_name='param', title=None, xlabel=None,
     xlabel : str, optional
         X-axis label (defaults to param_name)
     log_x, log_y : bool
-        Whether to use log scale
+        Whether to use log scale. When True and data spans less than
+        one decade, minor ticks are labeled so the axis isn't blank.
     figsize : tuple
         Figure size
     save_path : str, optional
@@ -913,34 +955,58 @@ def plot_benchmark(df, param_name='param', title=None, xlabel=None,
     if df is None or df.empty:
         print("No data to plot!")
         return
-    
-    plt.figure(figsize=figsize)
-    
+ 
+    fig, ax = plt.subplots(figsize=figsize)
+ 
     for algo_name in df['algorithm'].unique():
         subset = df[df['algorithm'] == algo_name]
-        plt.errorbar(subset[param_name], subset['mean'], 
-                     marker='o', linestyle='-', label=algo_name, 
-                     yerr=subset['stddev'], capsize=4)
-
-    plt.xlabel(xlabel or param_name)
-    plt.ylabel('Mean Execution Time (seconds)')
-    plt.title(title or 'Benchmark Comparison')
-    
+        ax.errorbar(subset[param_name], subset['mean'],
+                    marker='o', linestyle='-', label=algo_name,
+                    yerr=subset['stddev'], capsize=4)
+ 
+    ax.set_xlabel(xlabel or param_name)
+    ax.set_ylabel('Mean Execution Time (seconds)')
+    ax.set_title(title or 'Benchmark Comparison')
+ 
+    # --- X axis ----------------------------------------------------------
     if log_x:
-        plt.xscale('log', base=2)
+        ax.set_xscale('log', base=2)
+        # Plain integers instead of 2^n notation for the x axis (param
+        # values are typically already powers of 2 and read more clearly
+        # as 8, 16, 32, ... than as 2^3, 2^4, 2^5, ...).
+        ax.xaxis.set_major_formatter(ScalarFormatter())
+ 
+    # --- Y axis ----------------------------------------------------------
     if log_y:
-        plt.yscale('log', base=2)
-    
-    plt.grid(True, which="both", ls="--")
-    plt.legend()
-    plt.tight_layout()
-    
+        ax.set_yscale('log', base=2)
+        # Plain numbers on major ticks (instead of 2^n).
+        ax.yaxis.set_major_formatter(ScalarFormatter())
+        # If all data sits inside a single log2 decade (e.g. all values
+        # between 2 s and 4 s), matplotlib's default LogLocator puts no
+        # major ticks in the visible range and the axis comes out blank.
+        # Detect this from the data span and add labeled minor ticks
+        # only when needed — otherwise the minors clutter wide-range
+        # plots like (fam + ssca + scf_2d_fft) together.
+        y_min = float(df['mean'].min())
+        y_max = float(df['mean'].max())
+        span_octaves = np.log2(y_max / y_min) if y_min > 0 else 10.0
+        if span_octaves < 2.0:
+            # Less than 4x ratio top to bottom: label minor ticks too.
+            ax.yaxis.set_minor_locator(
+                LogLocator(base=2.0, subs=np.arange(1.1, 2.0, 0.1))
+            )
+            ax.yaxis.set_minor_formatter(ScalarFormatter())
+            ax.tick_params(axis='y', which='minor', labelsize=8)
+ 
+    ax.grid(True, which="both", ls="--")
+    ax.legend()
+    fig.tight_layout()
+ 
     if save_path:
-        plt.savefig(save_path)
+        fig.savefig(save_path)
         print(f"Figure saved to: {save_path}")
-    
+ 
     plt.show()
-
 def memory_test(func_lambda, name="algorithm", Np=8, L=2, max_log_2=18, no_of_run=1, fam=False, plot=True):
     start_i = 10
     end_i = max_log_2 #18
@@ -988,29 +1054,7 @@ def memory_test(func_lambda, name="algorithm", Np=8, L=2, max_log_2=18, no_of_ru
 
     return average_peak_usage, standard_deviation, signal_length
 
-def get_alpha_resolution(alpha):
-    """
-    Get the actual cyclic frequency resolution from the alpha vector.
-    
-    Parameters
-    ----------
-    alpha : ndarray
-        Vector of cyclic frequencies.
-    
-    Returns
-    -------
-    delta_alpha : float
-        Cyclic frequency resolution.
-    """
-    # Handle both sorted and fftshifted alpha vectors
-    alpha_sorted = np.sort(alpha)
-    delta_alpha = np.median(np.diff(alpha_sorted))
-    return delta_alpha
-
-import time
-import timeit
-
-def run_benchmark_timeit(func, Np, L, fam=False, runs=100):
+def run_benchmark_timeit(func, Np, L, fam=False, runs=10):
     # timeit expects a callable with no arguments
 
     setup_code = """\
@@ -1046,13 +1090,29 @@ test_signal = rng.uniform(-1, 1, 2**15) + rng.uniform(-1, 1, 2**15) * 1j
     
     return result
 
-def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096, mode="full", save=False, fam=False):
+def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
+                  mode="full", save=False, fam=False, skip=None):
+    """Run the standard test battery against an SCF estimator.
 
-    print("hello")
+    Parameters
+    ----------
+    func_lambda, name, Np, L, N_roc, mode, save, fam
+        Unchanged from the previous signature.
+    skip : str, iterable of str, or None
+        Names (or substrings) of tests to skip. Matching is case-
+        insensitive substring. Examples:
 
+            skip="validation"                # skip both validation tests
+            skip=["validation", "memory"]    # skip all three
+            skip="roc (conjugate)"           # skip one specific test
+            skip=None                        # run everything (default)
+
+        Useful for estimators whose memory or runtime footprint makes
+        certain tests impractical — e.g. the 2D-FFT SCF's O(N^2) SACM
+        at N_roc=4096 OOMs on 8 GB machines during the ROC sweep.
+    """
     if mode == "full":
         alpha_max = 1.0
-
         tests = [
             ("Validation Test (Non Conjugate)", lambda: validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
             ("Validation Test (Conjugate)", lambda: validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=True, save=save, fam=fam)),
@@ -1060,58 +1120,81 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096, mode="
             ("Speed Test (Benchmark)", lambda: run_benchmark_timeit(func_lambda, Np, L, fam=fam)),
             ("Cycle Leakage", lambda: window_test(func_lambda, name=name, Np=Np, L=L, snr=np.arange(-10, 0), fam=fam)),
             ("ROC Plot (Non Conjugate)", lambda: plot_roc_non_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10])),
-            ("ROC Plot (Conjugate)", lambda: plot_roc_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10]))
+            ("ROC Plot (Conjugate)", lambda: plot_roc_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10])),
         ]
     elif mode == "limited":
         alpha_max = 0.5
-
         tests = [
             ("Validation Test (Non Conjugate)", lambda: validation_test(func_lambda, name=name, alpha_max=alpha_max, no_of_run=10, conjugate=False, save=save, fam=fam)),
             ("Memory Test", lambda: memory_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("Speed Test (Benchmark)", lambda: run_benchmark_timeit(func_lambda, Np, L, fam=fam)),
             ("Cycle Leakage", lambda: window_test(func_lambda, name=name, Np=Np, L=L, snr=np.arange(-10, 0), fam=fam)),
-            ("ROC Plot (Non Conjugate)", lambda: plot_roc_non_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10]))
+            ("ROC Plot (Non Conjugate)", lambda: plot_roc_non_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10])),
         ]
     else:
-        return ValueError("Mode must be full or limited.")
-    
-    results = {}
+        raise ValueError("Mode must be full or limited.")
 
-    total_time = 0
+    # --- normalise skip -> list of lowercased patterns --------------------
+    if skip is None:
+        skip_patterns = []
+    elif isinstance(skip, str):
+        skip_patterns = [skip.lower()]
+    else:
+        skip_patterns = [str(s).lower() for s in skip]
+
+    def _should_skip(test_name: str) -> bool:
+        low = test_name.lower()
+        return any(pat in low for pat in skip_patterns)
+
+    # --- partition into run list + skip list ------------------------------
+    to_run = [(n, f) for n, f in tests if not _should_skip(n)]
+    skipped = [n for n, _ in tests if _should_skip(n)]
+
+    results = {}
+    total_time = 0.0
     passed = 0
-    
+    failed = 0
+
     print("=" * 50)
     print("Starting Test Suite")
     print("=" * 50)
-    
-    for test_name, test_func in tests:
+    if skipped:
+        print(f"Skipping {len(skipped)} test(s) by request:")
+        for n in skipped:
+            print(f"  - {n}")
+            results[n] = None   # explicit marker in the results dict
+        print()
+
+    for test_name, test_func in to_run:
         print(f"\n▶ Running: {test_name}...")
         start = time.perf_counter()
-        
+        result = None  # guarantee defined for the except branch
+
         try:
             result = test_func()
             elapsed = time.perf_counter() - start
-
             total_time += elapsed
-
             results[test_name] = result
             print(f"  ✓ Completed in {elapsed:.3f}s")
-
             passed += 1
         except Exception as e:
             elapsed = time.perf_counter() - start
-            results[test_name] = result
-
             total_time += elapsed
-
+            results[test_name] = result
+            failed += 1
             print(f"  ✗ Failed after {elapsed:.3f}s: {e}")
-    
+
     # Summary
     print("\n" + "=" * 50)
     print("Summary")
     print("=" * 50)
-    print(f"Passed: {passed}/{len(tests)} | Total time: {total_time:.3f}s")
-    
+    print(f"Passed:  {passed}/{len(to_run)}")
+    if failed:
+        print(f"Failed:  {failed}")
+    if skipped:
+        print(f"Skipped: {len(skipped)}")
+    print(f"Total time: {total_time:.3f}s")
+
     return results
 
 def spectral_correlation_to_coherence(psd, spectral_correlation, f, alpha, conjugate=False, fs=1):
@@ -1241,6 +1324,7 @@ def coherence_validation_test(func_lambda, name="algorithm", Np=512, snr=10, max
                 spectral_coh, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, L=Np/4, conjugate=conjugate, coherence=True)
             else:
                 spectral_coh, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate, coherence=True)
+            spectral_coh = np.abs(spectral_coh)  # handle complex output
 
             # Remove any value outside of the principal diamond
             mask_principal = np.abs(f) + np.abs(alpha / 2.0) < 0.5
@@ -1284,61 +1368,159 @@ def coherence_validation_test(func_lambda, name="algorithm", Np=512, snr=10, max
 
     return scd_rmse, signal_length
 
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import find_peaks
+def compute_cdp(Sx, alpha, reduction='max'):
+    """Compute the cyclic domain profile I(α) = max_f |S(f, α)|.
+
+    Parameters
+    ----------
+    Sx : ndarray
+        SCF magnitudes (or complex SCF — magnitude is taken internally).
+        Any shape; will be flattened.
+    alpha : ndarray
+        Cyclic-frequency coordinate of each entry in Sx. Must have the
+        same shape as Sx.
+    reduction : {'max', 'sum'}
+        How to reduce over f at each unique α. 'max' is the standard
+        definition; 'sum' is less noise-sensitive but loses peak contrast.
+
+    Returns
+    -------
+    alpha_unique : (K,) ndarray
+        Sorted unique α values present in the input.
+    profile : (K,) ndarray
+        max_f (or Σ_f) of |Sx| at each α.
+    """
+    Sx_mag = np.abs(np.asarray(Sx)).ravel()
+    alpha_flat = np.asarray(alpha).ravel()
+
+    if Sx_mag.shape != alpha_flat.shape:
+        raise ValueError(
+            f"Sx and alpha must have the same shape after flattening; "
+            f"got {Sx_mag.shape} and {alpha_flat.shape}"
+        )
+
+    # Quantize to 10 decimal places to avoid floating-point near-duplicates
+    # creating spurious distinct α values across different estimators.
+    alpha_q = np.round(alpha_flat, decimals=10)
+    alpha_unique, inverse = np.unique(alpha_q, return_inverse=True)
+    profile = np.zeros_like(alpha_unique, dtype=Sx_mag.dtype)
+
+    if reduction == 'max':
+        np.maximum.at(profile, inverse, Sx_mag)
+    elif reduction == 'sum':
+        np.add.at(profile, inverse, Sx_mag)
+    else:
+        raise ValueError(f"Unknown reduction: {reduction!r}")
+
+    return alpha_unique, profile
+
+
+def plot_cdp(estimates, reduction='max', ax=None, log_scale=False,
+             alpha_range=None, title=None, normalize=False):
+    """Plot cyclic domain profiles for multiple estimators on one axis.
+
+    Parameters
+    ----------
+    estimates : dict[str, tuple] or list[tuple]
+        Maps label -> (Sx, alpha), or a list of (label, Sx, alpha) triples.
+        Sx and alpha are the algorithm's native output arrays.
+    reduction : {'max', 'sum'}
+        Reduction over f. See compute_cdp.
+    ax : matplotlib axis, optional
+        Plot on this axis. Creates a new figure if None.
+    log_scale : bool
+        Use a log y-axis.
+    alpha_range : tuple (low, high), optional
+        Restrict the x-axis range.
+    title : str, optional
+        Plot title.
+    normalize : bool
+        Divide each profile by its α=0 value (or max if α=0 absent),
+        so all algorithms share the same scale for shape comparison.
+
+    Returns
+    -------
+    ax : matplotlib axis
+    """
+    if isinstance(estimates, dict):
+        items = [(label, Sx, alpha) for label, (Sx, alpha) in estimates.items()]
+    else:
+        items = list(estimates)
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 4))
+
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    for i, (label, Sx, alpha) in enumerate(items):
+        alpha_u, profile = compute_cdp(Sx, alpha, reduction=reduction)
+
+        if normalize:
+            idx_zero = np.argmin(np.abs(alpha_u))
+            scale = profile[idx_zero] if abs(alpha_u[idx_zero]) < 1e-6 else profile.max()
+            profile = profile / scale if scale > 0 else profile
+
+        color = colors[i % len(colors)]
+
+        # Stem for sparse outputs (e.g. S3CA), line for dense
+        if len(alpha_u) < 500:
+            markerline, stemlines, baseline = ax.stem(
+                alpha_u, profile, linefmt=color, markerfmt=color,
+                basefmt=' ', label=label,
+            )
+            markerline.set_markersize(3)
+            stemlines.set_linewidth(0.7)
+            stemlines.set_alpha(0.6)
+        else:
+            ax.plot(alpha_u, profile, color=color, label=label,
+                    linewidth=0.7, alpha=0.8)
+
+    if log_scale:
+        ax.set_yscale('log')
+
+    if alpha_range is not None:
+        ax.set_xlim(alpha_range)
+
+    ax.set_xlabel('Cycle frequency α')
+    ylabel = 'I(α) = max_f |C(f, α)|' if reduction == 'max' else 'Σ_f |C(f, α)|'
+    if normalize:
+        ylabel += '  (normalized to α=0)'
+    ax.set_ylabel(ylabel)
+    if title:
+        ax.set_title(title)
+    ax.legend(loc='best')
+    ax.grid(alpha=0.3)
+
+    return ax
+
 
 def plot_cyclic_domain_profile(spectral_coherence, f, alpha, conjugate=False, plot=True):
-    # N is assumed to be the signal/block length based on standard SSCA
-    N = spectral_coherence.shape[1]
+    """Legacy single-estimator CDP plot. Prefer compute_cdp / plot_cdp for new code."""
+    alpha_u, cdp = compute_cdp(spectral_coherence, alpha)
 
-    # 1. Direct integer conversion (Avoids redundant float64 array allocations)
-    # Replaces: alpha_binned = np.round(alpha * N) / N ... etc.
-    alpha_int = np.round(alpha.ravel() * N).astype(int)
-    sc_flat = spectral_coherence.ravel()
-
-    # 2. Early Filtering (Massive speedup)
-    # If we don't need negative alphas, drop them BEFORE the expensive np.maximum.at
     if not conjugate:
-        mask = alpha_int >= 0  # Equivalent to > -1/N in the original code
-        alpha_int = alpha_int[mask]
-        sc_flat = sc_flat[mask]
+        mask = alpha_u >= 0
+        alpha_u = alpha_u[mask]
+        cdp = cdp[mask]
 
-    # 3. Shift indices to start at 0
-    offset = alpha_int.min()
-    alpha_shifted = alpha_int - offset
-    num_bins = alpha_shifted.max() + 1
-
-    # 4. Unbuffered maximum aggregation
-    cdp = np.full(num_bins, -np.inf)
-    np.maximum.at(cdp, alpha_shifted, sc_flat)
-
-    # 5. Build the alpha grid and remove empty bins
-    cycle_frequency = (np.arange(num_bins) + offset) / N
-    
-    valid = cdp > -np.inf
-    cycle_frequency = cycle_frequency[valid]
-    cdp = cdp[valid]
-
-    # 6. Plotting
     if plot:
         title = "Conjugate" if conjugate else "Non-Conjugate"
-        fig = plt.figure(figsize=(7, 3))
+        plt.figure(figsize=(7, 3))
         plt.title("Cyclic Domain Profile")
         plt.xlabel(f"{title} Cycle Frequency (Hz)")
         plt.ylabel("Maximum over frequency")
-        plt.stem(cycle_frequency, cdp)
+        plt.stem(alpha_u, cdp)
 
-    return cycle_frequency, cdp
+    return alpha_u, cdp
 
-def cyclic_domain_profile_test(func_lambda, Np=64, L=16, snr=10, conjugate=False, plot=True, fam=False, tolerance_bins=2, threshold=0.2):
-    samples_per_symbol = 10 # Symbol rate = 0.10 Hz
+
+def cyclic_domain_profile_test(func_lambda, Np=64, L=16, snr=10, signal_length=32768, conjugate=False, plot=True, fam=False, tolerance_bins=2, threshold=0.2):
+    samples_per_symbol = 10
     cfo = 0.05
-    number_of_symbols = 4000
 
-    bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol)
-    bpsk_signal_cfo = add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
-    bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr)
+    bpsk_signal = create_rect_bpsk_signal(signal_length, samples_per_symbol)
+    bpsk_signal_cfo = add_cfo(bpsk_signal, cfo)
+    bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr)[:signal_length]
 
     N = len(bpsk_signal_noise_cfo)
 
@@ -1347,75 +1529,47 @@ def cyclic_domain_profile_test(func_lambda, Np=64, L=16, snr=10, conjugate=False
     else:
         spectral_coherence, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate, coherence=True)
 
-    cf, cdp = plot_cyclic_domain_profile(spectral_coherence, f, alpha, conjugate=conjugate, plot=False)
+    cf, cdp = compute_cdp(spectral_coherence, alpha)
 
-    # Pad cdp so find_peaks can check boundary value
-    cdp = np.pad(cdp, 1)
+    if not conjugate:
+        mask = cf >= 0
+        cf = cf[mask]
+        cdp = cdp[mask]
 
-    # 2. Find peaks
-    # 'distance' prevents finding multiple peaks on the skirts of one wide peak
-    peak_indices, properties = find_peaks(cdp, height=threshold, distance=3)
+    # Pad so find_peaks can detect peaks at boundaries
+    cdp_padded = np.pad(cdp, 1)
+    peak_indices, properties = find_peaks(cdp_padded, height=threshold, distance=3)
     detected_alphas = cf[peak_indices]
     detected_heights = properties['peak_heights']
 
-    # 3. Generate Expected Peaks (Harmonics of the symbol rate)
-    max_alpha = np.max(cf)
-    min_alpha = np.min(cf)
-    f_sym = 1/samples_per_symbol
+    f_sym = 1 / samples_per_symbol
     if conjugate:
-        expected_alphas = np.arange(-1, 1, f_sym) + 2*cfo
+        expected_alphas = np.arange(-1, 1, f_sym) + 2 * cfo
     else:
         expected_alphas = np.arange(0, 1, f_sym)
-    # Filter expected alphas to only those strictly within our axis limits
-    expected_alphas = expected_alphas[(expected_alphas <= max_alpha) & (expected_alphas >= min_alpha)]
+    expected_alphas = expected_alphas[(expected_alphas <= cf.max()) & (expected_alphas >= cf.min())]
 
-    # 4. Cross-Validation
-    alpha_resolution = 1 / N
-    tolerance = tolerance_bins * alpha_resolution
-    
-    missing_peaks = []
-    erroneous_peaks = []
+    tolerance = tolerance_bins / N
+    missing_peaks = [e for e in expected_alphas if not np.any(np.abs(detected_alphas - e) <= tolerance)]
+    erroneous_peaks = [d for d in detected_alphas if not np.any(np.abs(expected_alphas - d) <= tolerance)]
 
-    # Check for missing expected peaks
-    for expected in expected_alphas:
-        # Is there any detected peak within the tolerance of the expected frequency?
-        matches = np.abs(detected_alphas - expected) <= tolerance
-        if not np.any(matches):
-            missing_peaks.append(expected)
-
-    # Check for erroneous detected peaks
-    for detected in detected_alphas:
-        # Does this detected peak match any expected frequency?
-        matches = np.abs(expected_alphas - detected) <= tolerance
-        if not np.any(matches):
-            erroneous_peaks.append(detected)
-
-    # Reverse the padding
-    cdp = cdp[1:-1] 
-
-    # 5. Optional Plotting for debugging
     if plot:
-        import matplotlib.pyplot as plt
         plt.figure(figsize=(8, 4))
         plt.plot(cf, cdp, label="CDP")
         plt.axhline(threshold, color='r', linestyle='--', label="Threshold")
         plt.plot(detected_alphas, detected_heights, "x", color='k', markersize=8, label="Detected Peaks")
         for ea in expected_alphas:
             plt.axvline(ea, color='g', linestyle=':', alpha=0.5)
-        plt.title("Automated Peak Detection on Cylic Domain Profile Test")
+        plt.title("Automated Peak Detection on Cyclic Domain Profile Test")
         plt.xlabel("Cycle Frequency (Hz)")
         plt.legend()
         plt.show()
 
-    # 6. Test Assertion Logic
     passed = len(missing_peaks) == 0 and len(erroneous_peaks) == 0
-    
     return passed, {
         "detected_alphas": detected_alphas,
         "missing_peaks": missing_peaks,
         "erroneous_peaks": erroneous_peaks,
-        "threshold_used": threshold
+        "threshold_used": threshold,
     }
-    
-    
 

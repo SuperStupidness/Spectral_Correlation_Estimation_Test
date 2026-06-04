@@ -1,7 +1,10 @@
-import numpy as np
+from __future__ import annotations
+from typing import Any, Tuple
 import pyfftw
+from scipy.signal import get_window as _get_window
+import numpy as np
 import matplotlib.pyplot as plt
-import scipy.signal 
+import scipy.signal
 
 def ssca(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False):   
     # Pad signal to make it even -> Faster fft
@@ -55,7 +58,7 @@ def ssca(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False):
     else:
         Xt = Xt * signal * E * window_2
 
-    ssca = np.abs(np.fft.fftshift(pyfftw.interfaces.numpy_fft.fft(Xt, axis=1), axes=1))
+    ssca = np.fft.fftshift(pyfftw.interfaces.numpy_fft.fft(Xt, axis=1), axes=1)
 
     # Map spectral and cycle frequencies to SSCA output
     q = np.linspace(-N/2, N/2 - 1, N)
@@ -70,9 +73,15 @@ def ssca(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False):
         else:
             sample_2 = np.rint((f - alpha/2) * Np/fs).astype(int)
 
-        psd_fsm = np.fft.ifftshift(psd(signal, L=Np, method="bartlett", db=False, plot=False))
+        psd_tsm = np.fft.ifftshift(psd(signal, L=Np, method="welch", db=False, plot=False))
 
-        coherence_denominator = np.sqrt(psd_fsm[sample_1] * psd_fsm[sample_2])
+        coherence_denominator = np.sqrt(psd_tsm[sample_1] * psd_tsm[sample_2])
+
+        # mask = np.abs(alpha) <= fs/(2*N)
+
+        # psd = np.fft.ifftshift(scca[mask])
+
+        # coherence_denominator = np.sqrt(psd[sample_1] * psd[sample_2])
 
         ssca_coh = ssca/coherence_denominator
 
@@ -180,7 +189,7 @@ def fam(signal, Np=64, L=16, conjugate=False, plot=False, coherence=False, fs=1)
     q = np.arange(q_size) - q_lim
     delta_alpha = q/N
 
-    fam = pyfftw.empty_aligned((Np * Np, q_size), dtype='float')
+    fam = pyfftw.empty_aligned((Np * Np, q_size), dtype='complex')
     fj = np.zeros((Np * Np, q_size), dtype='float')
     alpha = np.zeros((Np * Np, q_size), dtype='float')
 
@@ -189,7 +198,7 @@ def fam(signal, Np=64, L=16, conjugate=False, plot=False, coherence=False, fs=1)
     # Multiply rows of Xt to Yt* and window + fft
     for k in range(Np):
         fj[k*Np:(k+1)*Np, :] = (k + l - Np)/(2*Np) 
-        fam[k*Np:(k+1)*Np, :] = np.abs(pyfftw.interfaces.numpy_fft.fft(Xt[k, :] * Yt_conj * window_2, axis=1))[:, q]
+        fam[k*Np:(k+1)*Np, :] = pyfftw.interfaces.numpy_fft.fft(Xt[k, :] * Yt_conj * window_2, axis=1)[:, q]
         alpha[k*Np:(k+1)*Np, :] = (k - l)/Np + delta_alpha 
 
     fam = fam.reshape((Np, Np*q_size))
@@ -198,17 +207,15 @@ def fam(signal, Np=64, L=16, conjugate=False, plot=False, coherence=False, fs=1)
     
     # Optional spectral coherence calculation from SSCA SCF
     if coherence:
-        N = Np
-        
-        sample_1 = np.rint((fj + alpha/2) * N/fs).astype(int)
+        sample_1 = np.rint((fj + alpha/2) * Np/fs).astype(int)
         if conjugate:
-            sample_2 = np.rint((alpha/2 - fj) * N/fs).astype(int)
+            sample_2 = np.rint((alpha/2 - fj) * Np/fs).astype(int)
         else:
-            sample_2 = np.rint((fj - alpha/2) * N/fs).astype(int)
+            sample_2 = np.rint((fj - alpha/2) * Np/fs).astype(int)
 
-        psd_fsm = np.fft.ifftshift(psd(signal, L=Np, method="bartlett", db=False, plot=False))
+        psd_tsm = np.fft.ifftshift(psd(signal, L=Np, method="welch", db=False, plot=False))
 
-        coherence_denominator = np.sqrt(psd_fsm[sample_1] * psd_fsm[sample_2])
+        coherence_denominator = np.sqrt(psd_tsm[sample_1] * psd_tsm[sample_2])
 
         fam_coh = fam/coherence_denominator
 
@@ -689,17 +696,17 @@ def GetWindow(window_type, window_size):
     return(Window)
 
 
-def fast_sc_wrapper(signal, Np=64, conjugate=False, coherence=False):
+def fast_sc_wrapper(signal, Np=64, conjugate=False, coherence=False, window="hann"):
     if coherence:
         opt = {"abs": 0, "calib": 1, "coh": 1}
     else:
         opt = {"abs": 0, "calib": 1, "coh": 0}
 
-    Sx, alpha, f, _, _, _ = Fast_SC(signal, Nw=Np, alpha_max=0.5, Fs=1, opt=opt)
+    Sx, alpha, f, _, _, _ = Fast_SC(signal, Nw=Np, alpha_max=0.5, Fs=1, opt=opt, WindowType=window)
 
     alpha, f = np.meshgrid(alpha, f)
 
-    return np.abs(Sx), f, alpha
+    return Sx, f, alpha
 
 def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
     N = len(signal)
@@ -720,7 +727,7 @@ def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
             g = np.ones(L)/L
         
             # Smoothing to obtain PSD
-            psd = signal.oaconvolve(power_spectrum, g)
+            psd = scipy.signal.oaconvolve(power_spectrum, g)
         
             # Remove filter transient
             # remove L-1 samples on the left and extend (L-1)/2 using left most sample
@@ -734,7 +741,7 @@ def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
             psd = psd_truncated
             
         case 'bartlett':
-            power_sum = np.zeros(L)
+            power_sum = np.zeros(L, dtype="float")
             num_time_segments = int(np.ceil(N/L))
         
             for i in range(num_time_segments):
@@ -745,11 +752,22 @@ def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
             psd = power_sum/num_time_segments
             
         case 'welch':
-            power_sum = np.zeros(L)
-            num_time_segments = int(np.ceil(2*N/L))
+            w = np.hanning(L) # Get hamming window for welch method
+            u = 1/L * np.sum(w**2) # normalization factor
+    
+            power_sum = np.zeros(L, dtype="float")
+            
+            if L % 2 == 1:
+                hop = (L - 1) // 2
+            else:
+                hop = L // 2
+
+            num_time_segments = N // hop
+
+            signal_padded = np.pad(signal, (0, L - (N - num_time_segments * hop)))
         
             for i in range(num_time_segments):
-                power_spectrum = 1/(L*fs) * np.abs(np.fft.fftshift(np.fft.fft(signal[int(i*L/2):min(int((i+2)*L/2), N)], n=L)))**2
+                power_spectrum = 1/(L*fs*u) * np.abs(np.fft.fftshift(np.fft.fft(signal_padded[i*hop:(i+2)*hop] * w)))**2
                     
                 power_sum += power_spectrum
         
@@ -764,6 +782,7 @@ def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
     if plot:
         f = np.linspace(-fs/2, fs/2, len(psd))
         plt.xlabel("Frequency (Hz)")
+
         plt.plot(f, psd)
         
         if db:
@@ -772,8 +791,9 @@ def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
             plt.ylabel("Power (W/Hz)")
             
         plt.title(f"Power Spectral Density ({method}'s method)")
-        
+
     return psd
+ 
 
 def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False):   
     # Pad signal to make it even -> Faster fft
@@ -829,7 +849,7 @@ def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=Fal
     else:
         Xt = Xt * signal * E * window_2
 
-    ssca = np.abs(np.fft.fftshift(pyfftw.interfaces.numpy_fft.fft(Xt, axis=1), axes=1))
+    ssca = np.fft.fftshift(pyfftw.interfaces.numpy_fft.fft(Xt, axis=1), axes=1)
 
     # Map spectral and cycle frequencies to SSCA output
     q = np.linspace(-N/2, N/2 - 1, N)
@@ -844,11 +864,15 @@ def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=Fal
         else:
             sample_2 = np.rint((f - alpha/2) * Np/fs).astype(int)
 
-        smoothing_width = int(0.01 * N)
+        psd_tsm = np.fft.ifftshift(psd(signal, L=Np, method="welch", db=False, plot=False))
 
-        psd_fsm = np.fft.ifftshift(psd(signal, L=Np, method="bartlett", db=False, plot=False))
+        coherence_denominator = np.sqrt(psd_tsm[sample_1] * psd_tsm[sample_2])
 
-        coherence_denominator = np.sqrt(psd_fsm[sample_1] * psd_fsm[sample_2])
+        # mask = np.abs(alpha) <= fs/(2*N)
+
+        # psd = np.fft.ifftshift(scca[mask])
+
+        # coherence_denominator = np.sqrt(psd[sample_1] * psd[sample_2])
 
         ssca_coh = ssca/coherence_denominator
 
@@ -970,7 +994,7 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
     q = np.arange(q_size) - q_lim
     delta_alpha = q/N
 
-    fam = pyfftw.empty_aligned((Np * Np, q_size), dtype='float')
+    fam = pyfftw.empty_aligned((Np * Np, q_size), dtype='complex')
     fj = np.zeros((Np * Np, q_size), dtype='float')
     alpha = np.zeros((Np * Np, q_size), dtype='float')
 
@@ -979,7 +1003,7 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
     # Multiply rows of Xt to Yt* and window + fft
     for k in range(Np):
         fj[k*Np:(k+1)*Np, :] = (k + l - Np)/(2*Np) 
-        fam[k*Np:(k+1)*Np, :] = np.abs(pyfftw.interfaces.numpy_fft.fft(Xt[k, :] * Yt_conj * window_2, axis=1))[:, q]
+        fam[k*Np:(k+1)*Np, :] = pyfftw.interfaces.numpy_fft.fft(Xt[k, :] * Yt_conj * window_2, axis=1)[:, q]
         alpha[k*Np:(k+1)*Np, :] = (k - l)/Np + delta_alpha 
 
     # Remove any value outside the principal diamond
@@ -991,7 +1015,7 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
     fj = fj.reshape((Np, Np*q_size))
     alpha = alpha.reshape((Np, Np*q_size))
     
-    # Optional spectral coherence calculation from SSCA SCF
+   # Optional spectral coherence calculation from SSCA SCF
     if coherence:
         sample_1 = np.rint((fj + alpha/2) * Np/fs).astype(int)
         if conjugate:
@@ -999,9 +1023,9 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
         else:
             sample_2 = np.rint((fj - alpha/2) * Np/fs).astype(int)
 
-        psd_fsm = np.fft.ifftshift(psd(signal, L=Np, method="bartlett", db=False, plot=False))
+        psd_tsm = np.fft.ifftshift(psd(signal, L=Np, method="welch", db=False, plot=False))
 
-        coherence_denominator = np.sqrt(psd_fsm[sample_1] * psd_fsm[sample_2])
+        coherence_denominator = np.sqrt(psd_tsm[sample_1] * psd_tsm[sample_2])
 
         fam_coh = fam/coherence_denominator
 
@@ -1020,3 +1044,199 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
         return fam_coh, fj, alpha 
     else:
         return fam, fj, alpha 
+
+def scf_2d_fft(
+    x: np.ndarray,
+    max_lag: int | None = None,
+    window: Any = "boxcar",
+    fs: float = 1.0,
+    remove_mean: bool = True,
+    conjugate: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Estimate the SCF of a cyclostationary process via the 2D-FFT method.
+ 
+    Parameters
+    ----------
+    x : array_like, shape (N,)
+        Complex- or real-valued discrete-time realisation.
+    max_lag : int, optional
+        Maximum correlation lag *L* in samples. The lag window covers
+        tau in [-L, L] (total length 2L+1). Choose L >= tau_cor and
+        L << N. Default: ``max(1, N // 32)``.
+    window : str, tuple, or float, optional
+        Lag window applied along the (n - m) diagonal, forwarded to
+        ``scipy.signal.get_window`` with ``fftbins=False`` (symmetric).
+        Any scipy window name is accepted (``"hann"``, ``"hamming"``,
+        ``"blackman"``, ``"bartlett"``, ``"nuttall"``, ``"flattop"``,
+        ``"boxcar"``, ...). Parameterised windows use the tuple form,
+        e.g. ``("tukey", 0.5)``, ``("kaiser", 14)``, ``("gaussian", 7)``,
+        ``("chebwin", 100)``. A bare float is treated as Kaiser beta.
+ 
+        ``"rect"`` is kept as an alias for ``"boxcar"`` to match the
+        paper's terminology. Default ``"rect"`` (as used in the paper).
+        Tapered windows reduce spectral leakage at the cost of mainlobe
+        broadening.
+    fs : float, optional
+        Sampling frequency in Hz. Default 1.0 (normalised frequencies).
+    remove_mean : bool, optional
+        Subtract the sample mean from ``x`` before processing, per
+        paper eq. (3). Default True.
+    conjugate : bool, optional
+        If False (default), estimate the standard (non-conjugate) SCF
+        using the SACM ``R[n, m] = x[n] * conj(x[m])``. The output at
+        ``(alpha, f)`` measures correlation between the spectral
+        components ``X(f + alpha/2)`` and ``X*(f - alpha/2)``.
+ 
+        If True, estimate the *conjugate* SCF using the modified SACM
+        ``R*[n, m] = x[n] * x[m]`` (no conjugation on the second factor).
+        The output at ``(alpha, f)`` measures correlation between
+        ``X(f + alpha/2)`` and ``X(alpha/2 - f)``, i.e. between a
+        spectral component and its mirror around ``alpha/2``. This is
+        non-trivial for complex-valued signals that are improper /
+        non-circular (e.g. BPSK, AM-DSB, any real signal whose analytic
+        form is being processed, rotating phasors). For real-valued
+        ``x`` both estimates are identical.
+ 
+    Returns
+    -------
+    Sx : (N, N) complex ndarray
+        SCF samples on the native diamond lattice, ``fftshift``-ed so
+        that ``(p, q) = (0, 0)`` is at the array centre.
+    f : (N, N) float ndarray
+        Conventional-frequency coordinate of each sample, in Hz.
+        Matches the shape of ``Sx`` for direct use with
+        ``plt.pcolormesh(f, alpha, np.abs(Sx))``.
+    alpha : (N, N) float ndarray
+        Cyclic-frequency coordinate of each sample, in Hz.
+ 
+    Notes
+    -----
+    The coordinate mapping is
+ 
+        alpha = (p - q) * fs / N
+        f     = (p + q) * fs / (2 * N)
+ 
+    where ``p`` and ``q`` are centred DFT indices. The same ``(alpha, f)``
+    mapping applies to both the non-conjugate and the conjugate outputs.
+ 
+    Memory cost is O(N^2) complex128 doubles. For ``N = 4096`` that is
+    roughly 256 MB for the SACM alone plus another 128 MB each for the
+    ``f`` and ``alpha`` grids. Ensure sufficient RAM. For larger N prefer
+    a segmentation-based estimator (FAM / SSCA) or an out-of-core variant.
+    """
+    x = np.asarray(x).astype(np.complex128, copy=True)
+    N = x.size
+    if N < 2:
+        raise ValueError("Input signal must have at least 2 samples.")
+    if remove_mean:
+        x -= x.mean()
+ 
+    if max_lag is None:
+        max_lag = max(1, N // 32)
+    L = max_lag
+    
+    try:
+        w0 = _get_window(window, L, fftbins=False)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid window specification {window!r}: {exc}") from exc
+ 
+    # ---- Steps 1 + 2: build weighted, banded SACM directly -------------
+    # Paper eq. (9)+(11)+(13) in one pass. The weighted SACM is zero
+    # outside |n - m| <= L, so instead of forming the full outer product
+    # and masking it (which would allocate a throwaway N x N complex
+    # intermediate, ~256 MB at N=4096), we fill only the 2L+1 non-zero
+    # diagonals of R in-place.
+    #
+    # Non-conjugate: R[n, m] = x[n] * conj(x[m])               eq. (9)
+    # Conjugate:     R*[n, m] = x[n] * x[m]   (no conjugation)
+    #
+    # ``pyfftw.empty_aligned`` gives pyfftw a SIMD-aligned buffer to
+    # plan against, matching the pattern used by the FAM / SSCA
+    # implementations in this test suite. The buffer is uninitialised,
+    # so we zero it before the banded fill.
+    R = pyfftw.empty_aligned((N, N), dtype="complex128")
+    R.fill(0.0)
+    x_right = x if conjugate else np.conj(x)
+    for k in range(-L//2, L//2):
+        val = w0[k + L//2]
+        if val == 0:
+            continue
+        if k >= 0:
+            R[np.arange(k, N), np.arange(N - k)] = \
+                val * (x[k:N] * x_right[:N - k])
+        else:
+            R[np.arange(N + k), np.arange(-k, N)] = \
+                val * (x[:N + k] * x_right[-k:])
+ 
+    # ---- Step 3: 2D transform, paper eq. (14) --------------------------
+    # S[p, q] = sum_{n, m} R[n, m] * exp(-j 2pi / N * (p n - q m))
+    #
+    # Decomposes as: forward FFT along n (axis 0) followed by an
+    # inverse FFT *without the 1/N factor* along m (axis 1). pyfftw's
+    # ifft carries numpy's 1/N normalisation, so we multiply by N.
+    R = pyfftw.interfaces.numpy_fft.fft(R, axis=0) / N
+    R = pyfftw.interfaces.numpy_fft.ifft(R, axis=1) * N
+ 
+    # ---- Step 4: centre the origin -------------------------------------
+    # ``fftshift`` just reorders strides, so it's safe to use numpy's.
+    Sx = np.fft.fftshift(R)
+    del R
+ 
+    # ---- Step 5: build 2D (f, alpha) coordinate grids ------------------
+    # Matches the FAM / SSCA return signature in this test suite.
+    # Centred DFT indices:
+    if N % 2 == 0:
+        idx = np.arange(-N // 2, N // 2)
+    else:
+        half = (N - 1) // 2
+        idx = np.arange(-half, half + 1)
+    P, Q = np.meshgrid(idx, idx, indexing="ij")
+    alpha = (P - Q).astype(np.float64) * (fs / N)
+    f = (P + Q).astype(np.float64) * (fs / (2.0 * N))
+ 
+    return Sx, f, alpha
+
+def scf_2d_fft_wrapper(signal, Np=64, fs=1, conjugate=False, coherence=False, window="hamming"):
+    Sx, f, alpha = scf_2d_fft(signal, max_lag=Np, fs=fs, conjugate=conjugate, window=window)
+
+    N = len(signal)
+    
+     # Optional spectral coherence calculation from SSCA SCF
+    if coherence:
+        sample_1 = np.rint((f + alpha/2) * Np/fs).astype(int)
+        if conjugate:
+            sample_2 = np.rint((alpha/2 - f) * Np/fs).astype(int)
+        else:
+            sample_2 = np.rint((f - alpha/2) * Np/fs).astype(int)
+
+        psd_tsm = np.fft.ifftshift(psd(signal, L=Np, method="welch", db=False, plot=False))
+
+        coherence_denominator = np.sqrt(psd_tsm[sample_1] * psd_tsm[sample_2])
+
+        # mask = np.abs(alpha) < fs/(2*N)
+
+        # psd = np.fft.ifftshift(Sx[mask])
+
+        # coherence_denominator = np.sqrt(psd[sample_1] * psd[sample_2])
+
+        Sx = Sx/coherence_denominator
+
+    return Sx, f, alpha
+
+def spectral_correlation_to_coherence(psd, spectral_correlation, f, alpha, conjugate=False, fs=1):
+    N = len(psd)
+
+    psd = np.fft.ifftshift(psd)
+
+    sample_1 = np.rint((f + alpha/2) * N/fs).astype(int)
+    if conjugate:
+        sample_2 = np.rint((alpha/2 - f) * N/fs).astype(int)
+    else:
+        sample_2 = np.rint((f - alpha/2) * N/fs).astype(int)
+
+    coherence_denominator = np.sqrt(psd[sample_1] * psd[sample_2])
+
+    coherence = spectral_correlation/coherence_denominator
+
+    return coherence
+    

@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from algorithm import ssca, fam, Fast_SC
+from scf_test.algorithm import ssca, fam, Fast_SC
 
 
 N = 4096 

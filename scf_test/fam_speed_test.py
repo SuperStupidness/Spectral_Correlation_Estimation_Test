@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from algorithm import fam
+from scf_test.algorithm import fam
 
 N = 2**15 #32768
 

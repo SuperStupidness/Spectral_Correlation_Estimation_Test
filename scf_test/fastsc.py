@@ -1,5 +1,5 @@
 import pytest
-from algorithm import Fast_SC
+from scf_test.algorithm import Fast_SC
 import numpy as np
 
 N = 2**15 #32768

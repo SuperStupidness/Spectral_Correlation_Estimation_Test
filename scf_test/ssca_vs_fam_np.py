@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from algorithm import ssca, fam
+from scf_test.algorithm import ssca, fam
 
 N = 2**12 #32768
 

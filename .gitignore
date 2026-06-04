@@ -24,3 +24,10 @@ fig/*
 
 # Examples ipynb (practice)
 Examples.ipynb
+
+# Experimental algorithm variants (local only — only algorithm/s3ca/ is committed)
+algorithm/*.py
+algorithm/s3ca_wrapper.py
+
+# Compiled binaries
+algorithm/s3ca/src/*.exe
