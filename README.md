@@ -116,7 +116,7 @@ run_all_tests(my_algorithm, name="my_algo", skip=["validation", "memory"])
 
 | Test | What it checks |
 |---|---|
-| **Validation** | RMSE against theoretical BPSK SCF across signal lengths $2^10$ – $2^19$ |
+| **Validation** | RMSE against theoretical BPSK SCF across signal lengths $2^{10}$ – $2^{19}$ |
 | **Memory** | Peak RAM usage vs signal length via `tracemalloc` |
 | **Speed** | Mean execution time via `timeit` (10 runs) |
 | **Cycle Leakage** | Average SCF magnitude at non-cyclic frequencies — lower is better |
