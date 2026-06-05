@@ -117,6 +117,8 @@ run_all_tests(my_algorithm, name="my_algo", skip=["validation", "memory"])
 | Test | What it checks |
 |---|---|
 | **Validation** | RMSE against theoretical BPSK SCF across signal lengths $2^{10}$ – $2^{19}$ |
+| **Coherence Validation** | RMSE of `coherence=True` output against theoretical BPSK spectral coherence across signal lengths $2^{10}$ – $2^{19}$. Requires `coherence=True`. |
+| **CDP** | Automated peak detection on the cyclic domain profile — checks that expected cycle frequencies are found and no spurious peaks appear. Requires `coherence=True`. |
 | **Memory** | Peak RAM usage vs signal length via `tracemalloc` |
 | **Speed** | Mean execution time via `timeit` (10 runs) |
 | **Cycle Leakage** | Average SCF magnitude at non-cyclic frequencies — lower is better |
@@ -130,6 +132,8 @@ Each test function is importable from `scf_test.tests`:
 ```python
 from scf_test.tests import (
     validation_test,
+    coherence_validation_test,
+    cyclic_domain_profile_test,
     memory_test,
     window_test,
     plot_roc_non_conjugate,

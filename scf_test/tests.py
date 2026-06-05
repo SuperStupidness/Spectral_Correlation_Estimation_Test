@@ -1045,7 +1045,7 @@ def memory_test(func_lambda, name="algorithm", Np=8, L=2, max_log_2=18, no_of_ru
     if plot:
         plt.figure(figsize=(5, 3))
         plt.errorbar(signal_length, average_peak_usage, yerr=standard_deviation, marker='o', capsize=4)
-        plt.title(f'{name} Memory Usage vs. Signal Length (Np = 8)')
+        plt.title(f'{name} Memory Usage vs. Signal Length (Np = {Np})')
         plt.xlabel('Signal Length (N)')
         plt.ylabel('Peak Memory Usage (MB)')
         plt.xscale('log', base=2)
@@ -1116,6 +1116,10 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
         tests = [
             ("Validation Test (Non Conjugate)", lambda: validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
             ("Validation Test (Conjugate)", lambda: validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=True, save=save, fam=fam)),
+            ("Coherence Validation (Non Conjugate)", lambda: coherence_validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
+            ("Coherence Validation (Conjugate)", lambda: coherence_validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=True, save=save, fam=fam)),
+            ("CDP Test (Non Conjugate)", lambda: cyclic_domain_profile_test(func_lambda, Np=Np, L=L, conjugate=False, fam=fam)),
+            ("CDP Test (Conjugate)", lambda: cyclic_domain_profile_test(func_lambda, Np=Np, L=L, conjugate=True, fam=fam)),
             ("Memory Test", lambda: memory_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("Speed Test (Benchmark)", lambda: run_benchmark_timeit(func_lambda, Np, L, fam=fam)),
             ("Cycle Leakage", lambda: window_test(func_lambda, name=name, Np=Np, L=L, snr=np.arange(-10, 0), fam=fam)),
@@ -1126,6 +1130,8 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
         alpha_max = 0.5
         tests = [
             ("Validation Test (Non Conjugate)", lambda: validation_test(func_lambda, name=name, alpha_max=alpha_max, no_of_run=10, conjugate=False, save=save, fam=fam)),
+            ("Coherence Validation (Non Conjugate)", lambda: coherence_validation_test(func_lambda, name=name, Np=Np, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
+            ("CDP Test (Non Conjugate)", lambda: cyclic_domain_profile_test(func_lambda, Np=Np, L=L, conjugate=False, fam=fam)),
             ("Memory Test", lambda: memory_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("Speed Test (Benchmark)", lambda: run_benchmark_timeit(func_lambda, Np, L, fam=fam)),
             ("Cycle Leakage", lambda: window_test(func_lambda, name=name, Np=Np, L=L, snr=np.arange(-10, 0), fam=fam)),
