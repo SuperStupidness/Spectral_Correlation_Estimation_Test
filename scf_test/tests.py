@@ -960,7 +960,7 @@ def plot_benchmark(df, param_name='param', title=None, xlabel=None,
  
     for algo_name in df['algorithm'].unique():
         subset = df[df['algorithm'] == algo_name]
-        ax.errorbar(subset[param_name], subset['mean'],
+        ax.errorbar(subset[param_name], subset['min'],
                     marker='o', linestyle='-', label=algo_name,
                     yerr=subset['stddev'], capsize=4)
  
