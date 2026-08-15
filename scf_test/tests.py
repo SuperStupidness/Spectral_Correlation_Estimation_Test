@@ -10,7 +10,7 @@ import tracemalloc
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import ScalarFormatter, LogLocator
+from matplotlib.ticker import ScalarFormatter, LogLocator, FuncFormatter
 from scipy.signal import find_peaks
 from scipy.signal.windows import get_window
 from sklearn import metrics
@@ -930,10 +930,22 @@ def run_benchmark(benchmark_filename, algorithm_name=['ssca', 'fam'], param_name
     return df
 
 
-def plot_benchmark(df, param_name='param', title=None, xlabel=None,
+def _format_seconds(value, _pos=None):
+    """Tick label for a time in seconds, with just enough decimals.
+
+    0.001 -> "0.001", 0.01 -> "0.01", 1 -> "1", 10 -> "10". Keeps the whole
+    axis in one unit rather than switching between us/ms/s.
+    """
+    if value <= 0:
+        return ''
+    decimals = max(0, int(np.ceil(-np.log10(value))))
+    return f'{value:.{decimals}f}'
+
+
+def plot_benchmark(df, param_name='param', title=None, xlabel=None, stat='min',
                    log_x=True, log_y=True, figsize=(6, 4), save_path=None):
     """Plot benchmark results.
- 
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -944,6 +956,10 @@ def plot_benchmark(df, param_name='param', title=None, xlabel=None,
         Plot title
     xlabel : str, optional
         X-axis label (defaults to param_name)
+    stat : {'min', 'median', 'mean', 'max'}
+        Timing statistic to plot. 'min' (the default) is the least
+        noise-contaminated estimate and the usual choice for benchmarks.
+        The y-axis label and the error bars follow this choice — see below.
     log_x, log_y : bool
         Whether to use log scale. When True and data spans less than
         one decade, minor ticks are labeled so the axis isn't blank.
@@ -951,21 +967,41 @@ def plot_benchmark(df, param_name='param', title=None, xlabel=None,
         Figure size
     save_path : str, optional
         Path to save figure
+
+    Notes
+    -----
+    Error bars are only drawn where they mean something for the chosen
+    statistic: stddev around 'mean', the asymmetric q1..q3 interquartile
+    range around 'median', and none at all for 'min'/'max' (an extremum
+    has no symmetric spread, and min - stddev is frequently negative,
+    which cannot be drawn on a log axis).
     """
     if df is None or df.empty:
         print("No data to plot!")
         return
- 
+
+    if stat not in df.columns:
+        print(f"Column '{stat}' not in DataFrame — available: {list(df.columns)}")
+        return
+
     fig, ax = plt.subplots(figsize=figsize)
- 
+
     for algo_name in df['algorithm'].unique():
         subset = df[df['algorithm'] == algo_name]
-        ax.errorbar(subset[param_name], subset['min'],
+
+        if stat == 'mean':
+            yerr = subset['stddev']
+        elif stat == 'median':
+            yerr = [subset['median'] - subset['q1'], subset['q3'] - subset['median']]
+        else:
+            yerr = None
+
+        ax.errorbar(subset[param_name], subset[stat],
                     marker='o', linestyle='-', label=algo_name,
-                    yerr=subset['stddev'], capsize=4)
- 
+                    yerr=yerr, capsize=4)
+
     ax.set_xlabel(xlabel or param_name)
-    ax.set_ylabel('Mean Execution Time (seconds)')
+    ax.set_ylabel(f'{stat.capitalize()} Execution Time (seconds)')
     ax.set_title(title or 'Benchmark Comparison')
  
     # --- X axis ----------------------------------------------------------
@@ -978,27 +1014,31 @@ def plot_benchmark(df, param_name='param', title=None, xlabel=None,
  
     # --- Y axis ----------------------------------------------------------
     if log_y:
-        ax.set_yscale('log', base=2)
-        # Plain numbers on major ticks (instead of 2^n).
-        ax.yaxis.set_major_formatter(ScalarFormatter())
-        # If all data sits inside a single log2 decade (e.g. all values
-        # between 2 s and 4 s), matplotlib's default LogLocator puts no
-        # major ticks in the visible range and the axis comes out blank.
-        # Detect this from the data span and add labeled minor ticks
-        # only when needed — otherwise the minors clutter wide-range
-        # plots like (fam + ssca + scf_2d_fft) together.
-        y_min = float(df['mean'].min())
-        y_max = float(df['mean'].max())
-        span_octaves = np.log2(y_max / y_min) if y_min > 0 else 10.0
-        if span_octaves < 2.0:
-            # Less than 4x ratio top to bottom: label minor ticks too.
-            ax.yaxis.set_minor_locator(
-                LogLocator(base=2.0, subs=np.arange(1.1, 2.0, 0.1))
-            )
-            ax.yaxis.set_minor_formatter(ScalarFormatter())
+        # Base 10, not base 2: times are raw seconds straight from the
+        # pytest-benchmark CSV, so decade ticks (0.001, 0.01, 0.1, 1, 10)
+        # keep one unit across the whole axis and make each step a plain
+        # x10. Base 2 put the ticks on powers of two, which needed SI
+        # prefixes to stay short and mixed us/ms/s on a single axis.
+        ax.set_yscale('log')
+        ax.yaxis.set_major_locator(LogLocator(base=10.0))
+        ax.yaxis.set_major_formatter(FuncFormatter(_format_seconds))
+        # If all data sits inside a single decade (e.g. all values between
+        # 2 s and 4 s), matplotlib's default LogLocator puts no major ticks
+        # in the visible range and the axis comes out blank. Detect this
+        # from the data span and add labeled minor ticks only when needed —
+        # otherwise the minors clutter wide-range plots like
+        # (fam + ssca + scf_2d_fft) together.
+        y_min = float(df[stat].min())
+        y_max = float(df[stat].max())
+        span_decades = np.log10(y_max / y_min) if y_min > 0 else 10.0
+        if span_decades < 1.0:
+            ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs='all'))
+            ax.yaxis.set_minor_formatter(FuncFormatter(_format_seconds))
             ax.tick_params(axis='y', which='minor', labelsize=8)
  
-    ax.grid(True, which="both", ls="--")
+    # Major ticks only. On a log axis which="both" adds the ~8 minor lines
+    # packed into every decade, which reads as clutter rather than a grid.
+    ax.grid(True, which="major", ls="-", lw=0.5, alpha=0.4)
     ax.legend()
     fig.tight_layout()
  
