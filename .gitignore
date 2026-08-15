@@ -29,5 +29,8 @@ Examples.ipynb
 algorithm/*.py
 algorithm/s3ca_wrapper.py
 
+# Local speed/profiling scratch scripts
+speed_test_files/
+
 # Compiled binaries
 algorithm/s3ca/src/*.exe
