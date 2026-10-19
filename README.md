@@ -9,6 +9,7 @@
 Extra Functions:
 - Cyclic Domain Plot for Extra Validation
 - Spectral Coherence Validation
+- Phase Structure Test (the validation test compares magnitudes only; this one checks the sign and phase of the estimate)
 
 ## Recommended Usage Order
 1. Validation (including coherence and cyclic domain profile)
@@ -29,7 +30,7 @@ Extra Functions:
 
 ## Note
 
-The FFT Accumulation Method (FAM) algorithm using wide mainlobe windows like flattop needs L = Np/8 instead of the recommended L = Np/4 to avoid cycle leakage.
+The FFT Accumulation Method (FAM) algorithm using wide mainlobe windows like flattop needs L = Np/8 instead of the recommended L = Np/4 to avoid cycle aliasing: with L = Np/4, images of each cyclic feature appear at fs/L either side of it.
 
 FastSC python implementation is from: [RBFastSC](https://github.com/rodrigoel/RBFastSC) by Rodrigo Emanoel de Britto Andrade Barros
 

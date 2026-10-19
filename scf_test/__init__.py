@@ -12,6 +12,10 @@ All four return ``(Sx, f, alpha)`` with a consistent call signature:
     Sx, f, alpha = fast_sc_wrapper(signal, Np=64, conjugate=False)
     Sx, f, alpha = scf_2d_fft_wrapper(signal, Np=64, conjugate=False)
 
+Flattop-window variants share the same signatures:
+
+    from scf_test import ssca_flattop, fam_flattop, scf_2d_fft_flattop
+
 Lower-level entry points (FastSC and 2D-FFT) are also exported for users
 who need direct control over algorithm-specific parameters:
 
@@ -23,6 +27,9 @@ from .algorithm import (
     fam,
     fast_sc_wrapper,
     scf_2d_fft_wrapper,
+    ssca_flattop,
+    fam_flattop,
+    scf_2d_fft_flattop,
     Fast_SC,
     scf_2d_fft,
     psd,
@@ -35,6 +42,9 @@ __all__ = [
     "fam",
     "fast_sc_wrapper",
     "scf_2d_fft_wrapper",
+    "ssca_flattop",
+    "fam_flattop",
+    "scf_2d_fft_flattop",
     "Fast_SC",
     "scf_2d_fft",
     "psd",

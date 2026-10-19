@@ -21,6 +21,7 @@ dependencies = [
     "pytest-benchmark>=5.2.3",
     "scikit-learn>=1.8.0",
     "scipy>=1.16.3",
+    "textalloc>=1.2.4",
 ]
 
 [project.optional-dependencies]

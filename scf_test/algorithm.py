@@ -48,9 +48,11 @@ def ssca(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False):
     pyfftw.interfaces.cache.enable()
           
     # Exponential to calculate complex demodulate
+    # The FFT above counts time from the start of the window, which begins pad_length
+    # samples before n; without that offset here, alternate channels come out negated
     k = np.linspace(-Np/2, Np/2 - 1, Np).reshape((-1,1))
     n = np.linspace(0, N - 1, N)
-    E = np.exp(-1j*2*np.pi*n*k/Np)
+    E = np.exp(-1j*2*np.pi*(n - pad_length)*k/Np)
     
     # Multiply with original conjugated signal and second FFT
     if not conjugate:
@@ -187,7 +189,9 @@ def fam(signal, Np=64, L=16, conjugate=False, plot=False, coherence=False, fs=1)
     q_size = q_lim*2
 
     q = np.arange(q_size) - q_lim
-    delta_alpha = q/N
+    # The second FFT runs over P channelizer outputs spaced L samples apart, so its bins are
+    # 1/(P L) apart. N is the padded length by this point and must not be used here.
+    delta_alpha = q/(P*L)
 
     fam = pyfftw.empty_aligned((Np * Np, q_size), dtype='complex')
     fj = np.zeros((Np * Np, q_size), dtype='float')
@@ -562,7 +566,10 @@ def Window_STFT_zoom(alpha,alpha0,Dt,Window,Nfft, opt, Fs = 1):
         # -->===================================
         # --> "positive" frequencies
         # -->===================================
-        T =  WSquared[Iw:0:-1].reshape((WSquared[Iw:0:-1].shape[0],1))
+        # Samples Iw-1 down to 0, the MATLAB WSquared(Iw-1:-1:1) quoted below. The RBFastSC port
+        # takes Iw down to 1, which counts the window peak three times and makes the calibration
+        # window too large by 2*WSquared[Iw], so the output is low by about 16/(3 Nw) for a Hann window.
+        T =  WSquared[Iw-1::-1].reshape((-1,1))
         # valor1 = (2*np.pi*n*(alpha[k]-alpha0))
         valor1 = np.cos(2*np.pi*n*(alpha[k]-alpha0))
         valor2 = ( np.multiply( T, valor1 ))
@@ -696,15 +703,53 @@ def GetWindow(window_type, window_size):
     return(Window)
 
 
-def fast_sc_wrapper(signal, Np=64, conjugate=False, coherence=False, window="hann"):
-    if coherence:
+def fast_sc_wrapper(signal, Np=64, conjugate=False, coherence=False, window="hann", alpha_max=0.5, builtin_coherence=True, zero_pad=True):
+    """Fast-SC on the same frequency axis and scale as the other estimators.
+
+    Fast_SC correlates X(f + alpha) with X(f), so the f it returns is the lower
+    of the two frequencies; the midpoint used by the other estimators is
+    f + alpha/2. When its block shift is one sample (alpha_max above Fs/4), the
+    alias term of its calibration window coincides with the main term and the
+    output comes out halved. Both are corrected here; call Fast_SC directly for
+    the output as the reference implementation returns it.
+
+    The coherence comes from Fast_SC's own option by default. With
+    builtin_coherence=False it is the SCD divided by the Welch PSD, as for the
+    other estimators.
+
+    Fast_SC has one cycle frequency per STFT frame, so N samples give a
+    resolution a little coarser than 1/N. With zero_pad (the default) the
+    signal is padded with zeros so that there are N frames per block shift and
+    the resolution is 1/N, as for the other estimators, which pad in the same way.
+    """
+    if coherence and builtin_coherence:
         opt = {"abs": 0, "calib": 1, "coh": 1}
     else:
         opt = {"abs": 0, "calib": 1, "coh": 0}
 
-    Sx, alpha, f, _, _, _ = Fast_SC(signal, Nw=Np, alpha_max=0.5, Fs=1, opt=opt, WindowType=window)
+    signal_in = signal
+    if zero_pad:
+        Nv, _, _, _ = param_Fast_SC(len(signal), Np, alpha_max, 1)
+        pad_length = int(Nv)  # window length minus the block shift
+        signal_in = np.pad(signal, (pad_length // 2, pad_length - pad_length // 2))
+
+    Sx, alpha, f, _, _, Nv = Fast_SC(signal_in, Nw=Np, alpha_max=alpha_max, Fs=1, opt=opt, WindowType=window)
 
     alpha, f = np.meshgrid(alpha, f)
+    f = f + alpha/2
+
+    # Block shift of one sample: restore the scale (the built-in coherence is already normalized)
+    if Np - Nv == 1 and opt["coh"] == 0:
+        Sx *= 2
+
+    if coherence and not builtin_coherence:
+        # The upper frequency of a pair runs past Fs/2, where Fast_SC pads with zeros; wrap the index
+        sample_1 = np.rint((f + alpha/2) * Np).astype(int) % Np
+        sample_2 = np.rint((f - alpha/2) * Np).astype(int) % Np
+
+        psd_tsm = np.fft.ifftshift(psd(signal, L=Np, method="welch", db=False, plot=False))
+
+        Sx = Sx/np.sqrt(psd_tsm[sample_1] * psd_tsm[sample_2])
 
     return Sx, f, alpha
 
@@ -795,7 +840,7 @@ def psd(signal, fs=1, method='daniell', L=256, db=False, plot=False):
     return psd
  
 
-def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False):   
+def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=False, window_1="flattop", window_2="boxcar"):
     # Pad signal to make it even -> Faster fft
     N = len(signal)
     if N % 2 == 1:
@@ -808,8 +853,8 @@ def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=Fal
         pad_length = int((Np-1)/2)
 
     # Initialize hamming windows
-    window_a = scipy.signal.get_window("flattop", Np)
-    window_g = scipy.signal.get_window("boxcar", N)
+    window_a = scipy.signal.get_window(window_1, Np)
+    window_g = scipy.signal.get_window(window_2, N)
 
     window = window_a.reshape((-1, 1))
 
@@ -839,9 +884,11 @@ def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=Fal
     pyfftw.interfaces.cache.enable()
           
     # Exponential to calculate complex demodulate
+    # The FFT above counts time from the start of the window, which begins pad_length
+    # samples before n; without that offset here, alternate channels come out negated
     k = np.linspace(-Np/2, Np/2 - 1, Np).reshape((-1,1))
     n = np.linspace(0, N - 1, N)
-    E = np.exp(-1j*2*np.pi*n*k/Np)
+    E = np.exp(-1j*2*np.pi*(n - pad_length)*k/Np)
     
     # Multiply with original conjugated signal and second FFT
     if not conjugate:
@@ -901,7 +948,7 @@ def ssca_flattop(signal, fs=1, Np=64, conjugate=False, plot=False, coherence=Fal
         return ssca, f, alpha 
     
 
-def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=False, fs=1):
+def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=False, fs=1, window_1="flattop", window_2="boxcar"):
     # L check
     if L < 1:
         L = 1
@@ -925,8 +972,8 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
     signal_padded = np.pad(signal, (pad_length, pad_length))
 
     # Normalize energy and power on window to get correct PSD magnitude
-    window_a = scipy.signal.get_window("flattop", Np)
-    window_g = scipy.signal.get_window("boxcar", P)
+    window_a = scipy.signal.get_window(window_1, Np)
+    window_g = scipy.signal.get_window(window_2, P)
     
     window = window_a.reshape((-1, 1))
 
@@ -992,7 +1039,9 @@ def fam_flattop(signal, Np=64, L=16, conjugate=False, plot=False, coherence=Fals
     q_size = q_lim*2
 
     q = np.arange(q_size) - q_lim
-    delta_alpha = q/N
+    # The second FFT runs over P channelizer outputs spaced L samples apart, so its bins are
+    # 1/(P L) apart. N is the padded length by this point and must not be used here.
+    delta_alpha = q/(P*L)
 
     fam = pyfftw.empty_aligned((Np * Np, q_size), dtype='complex')
     fj = np.zeros((Np * Np, q_size), dtype='float')
@@ -1222,6 +1271,9 @@ def scf_2d_fft_wrapper(signal, Np=64, fs=1, conjugate=False, coherence=False, wi
         Sx = Sx/coherence_denominator
 
     return Sx, f, alpha
+
+def scf_2d_fft_flattop(signal, Np=64, fs=1, conjugate=False, coherence=False):
+    return scf_2d_fft_wrapper(signal, Np=Np, fs=fs, conjugate=conjugate, coherence=coherence, window="flattop")
 
 def spectral_correlation_to_coherence(psd, spectral_correlation, f, alpha, conjugate=False, fs=1):
     N = len(psd)

@@ -101,7 +101,7 @@ def add_cfo(signal, cfo):
     signal_cfo = signal * np.exp(1j*2*np.pi*cfo*np.arange(0,len(signal)))
     return signal_cfo
 
-def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20, no_of_run=1, alpha_max = 1.0, conjugate=False, plot=True, save=True, fam=False):
+def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20, no_of_run=1, alpha_max = 1.0, conjugate=False, plot=True, save=True, fam=False, rng=None, extra_samples=0, complex_rmse=False):
     start_i = 10 # or 1024 (change if you want higher Np)
     end_i = max_log_2 
     range_i = end_i - start_i
@@ -120,6 +120,10 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
     cycle_frequency_check = np.round(cycle_frequency_check[np.abs(cycle_frequency_check) < alpha_max], 2)
 
     scd_ref = calculate_bpsk_scf(max_length, cycle_frequency_check, samples_per_symbol, cfo, conjugate=conjugate)
+
+    # Only filled when complex_rmse is set: squared error of the complex values, and the points compared
+    square_error_complex = np.zeros(range_i)
+    num_points_complex = np.zeros(range_i)
 
     # print(np.shape(scd_ref))
 
@@ -141,17 +145,24 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
             plt.subplots_adjust(hspace=0.5)
         
         for j in range(no_of_run):
-            rng=np.random.default_rng()
+            # Pass rng for a reproducible run; otherwise every trial is freshly seeded
+            trial_rng = np.random.default_rng() if rng is None else rng
             # Noise first then add cfo
-            bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=rng)
+            bpsk_signal = create_rect_bpsk_signal(number_of_symbols, samples_per_symbol, rng=trial_rng)
             bpsk_signal_cfo = add_cfo(bpsk_signal, cfo) # Add 0.5Hz CFO
-            bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr, rng=rng)
-            bpsk_signal_noise_cfo = bpsk_signal_noise_cfo[:N]
+            bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr, rng=trial_rng)
+            # extra_samples lets an estimator whose cycle frequency resolution is not 1/N reach it,
+            # e.g. Np - 1 for the Fast-SC, whose resolution is 1/(number of samples - Np + 1)
+            bpsk_signal_noise_cfo = bpsk_signal_noise_cfo[:N + extra_samples]
 
             if fam:
                 spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, L=Np/4, conjugate=conjugate)
             else:
                 spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate)
+            if complex_rmse:
+                if not np.iscomplexobj(spectral_corr):
+                    raise ValueError("The estimator returns magnitudes only, so its complex values cannot be compared.")
+                spectral_corr_complex = spectral_corr
             spectral_corr = np.abs(spectral_corr)  # handle complex output
 
             # Remove any value outside of the principal diamond
@@ -167,6 +178,16 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
                 f_index = np.rint(f_slice * max_length).astype(int)
                 num_points += len(scd_slice)
                 scd_sum_square_error += np.sum((scd_slice - scd_ref[k, f_index])**2)
+
+                if complex_rmse:
+                    # The phase of the SCD at a cycle frequency is set by the time origin, which each
+                    # estimator places differently, so that one phase is fitted and removed first.
+                    # What is left compares the complex values, including the sign changes across f.
+                    scd_slice_complex = spectral_corr_complex[mask & mask_principal]
+                    scd_ref_signed = bpsk_scf_signed(f_slice, cycle_frequency_check[k], samples_per_symbol, cfo, conjugate=conjugate)
+                    rotation = np.exp(-1j*np.angle(np.vdot(scd_ref_signed, scd_slice_complex)))
+                    square_error_complex[i - start_i] += np.sum(np.abs(scd_slice_complex*rotation - scd_ref_signed)**2)
+                    num_points_complex[i - start_i] += len(scd_slice_complex)
 
                 if plot and j == no_of_run - 1:
                     axs[k].plot(f_slice, scd_slice, label=name)
@@ -193,6 +214,9 @@ def validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=20,
         plt.title(f"RMSE vs Signal Length (Np={Np})")
         if save:
             plt.savefig(f"fig/{name}_validation.png")
+
+    if complex_rmse:
+        return scd_rmse, signal_length, np.sqrt(square_error_complex/num_points_complex)
 
     return scd_rmse, signal_length
 
@@ -506,7 +530,7 @@ def plot_roc_non_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_r
     plt.show()
 
     average_pd = np.concatenate((average_pd_bpsk, average_pd_qpsk, average_pd_gmsk) ,axis=1)
-    average_pf = np.concatenate((average_pd_bpsk, average_pd_qpsk, average_pd_gmsk) ,axis=1)
+    average_pf = np.concatenate((average_pf_bpsk, average_pf_qpsk, average_pf_gmsk) ,axis=1)
     
     return average_pd, average_pf, roc_auc, threshold_resolution
 
@@ -693,7 +717,7 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
     plt.show()
 
     average_pd = np.concatenate((average_pd_bpsk, average_pd_msk, average_pd_gmsk) ,axis=1)
-    average_pf = np.concatenate((average_pd_bpsk, average_pd_msk, average_pd_gmsk) ,axis=1)
+    average_pf = np.concatenate((average_pf_bpsk, average_pf_msk, average_pf_gmsk) ,axis=1)
     
     return average_pd, average_pf, roc_auc, threshold_resolution
 
@@ -1156,6 +1180,8 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
         tests = [
             ("Validation Test (Non Conjugate)", lambda: validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
             ("Validation Test (Conjugate)", lambda: validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=True, save=save, fam=fam)),
+            ("Phase Structure Test (Non Conjugate)", lambda: phase_structure_test(func_lambda, name=name, alpha_max=alpha_max, conjugate=False, fam=fam)),
+            ("Phase Structure Test (Conjugate)", lambda: phase_structure_test(func_lambda, name=name, alpha_max=alpha_max, conjugate=True, fam=fam)),
             ("Coherence Validation (Non Conjugate)", lambda: coherence_validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
             ("Coherence Validation (Conjugate)", lambda: coherence_validation_test(func_lambda, name=name, no_of_run=10, alpha_max=alpha_max, conjugate=True, save=save, fam=fam)),
             ("CDP Test (Non Conjugate)", lambda: cyclic_domain_profile_test(func_lambda, Np=Np, L=L, conjugate=False, fam=fam)),
@@ -1170,6 +1196,7 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
         alpha_max = 0.5
         tests = [
             ("Validation Test (Non Conjugate)", lambda: validation_test(func_lambda, name=name, alpha_max=alpha_max, no_of_run=10, conjugate=False, save=save, fam=fam)),
+            ("Phase Structure Test (Non Conjugate)", lambda: phase_structure_test(func_lambda, name=name, alpha_max=alpha_max, conjugate=False, fam=fam)),
             ("Coherence Validation (Non Conjugate)", lambda: coherence_validation_test(func_lambda, name=name, Np=Np, no_of_run=10, alpha_max=alpha_max, conjugate=False, save=save, fam=fam)),
             ("CDP Test (Non Conjugate)", lambda: cyclic_domain_profile_test(func_lambda, Np=Np, L=L, conjugate=False, fam=fam)),
             ("Memory Test", lambda: memory_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
@@ -1318,6 +1345,103 @@ def calculate_bpsk_scf(number_of_points, alpha_slices, Tk, f_offset, conjugate=F
     else:
         return spectral_correlation
 
+
+def bpsk_scf_signed(f, alpha, Tk, f_offset, conjugate=False):
+    """
+    Theoretical SCD of rectangular-pulse BPSK at the points (f, alpha), keeping its sign.
+
+    The result is real. The complete SCD is this multiplied by one phase per cycle
+    frequency, set by the symbol timing (and by the carrier phase for the conjugate
+    SCD). calculate_bpsk_scf gives the magnitude of the same expression on a grid.
+    """
+    term1 = Tk * np.sinc((f - f_offset + alpha/2) * Tk)
+    if conjugate:
+        term2 = Tk * np.sinc((alpha/2 - f - f_offset) * Tk)
+    else:
+        term2 = Tk * np.sinc((f - f_offset - alpha/2) * Tk)
+
+    return 1/Tk * term1 * term2
+
+def phase_structure_test(func_lambda, name="algorithm", Np=128, signal_length=4096, snr=30, no_of_run=5, alpha_max=1.0, conjugate=False, fam=False, extra_samples=0, threshold=0.2, rng=None):
+    """
+    Check the sign structure of the SCD estimate, independently of its scale.
+
+    A scale-free diagnostic: validation_test(complex_rmse=True) is the stricter check, since it
+    fits only the phase and so also tests the magnitude.
+
+    For rectangular BPSK the SCD at each cycle frequency is a real, signed function of f
+    times one complex constant. The estimate at every cycle frequency is fitted with that
+    constant; the residual of the fit, relative to the size of the estimate, is small only
+    if the sign of the estimate changes across f where the theory says it does.
+
+    Returns
+    -------
+    passed : bool
+        Whether the residual pooled over the cycle frequencies is below threshold
+    result : dict
+        The pooled residual, the same for a magnitude-only fit, and the residual and
+        fitted phase (degrees) at each cycle frequency
+    """
+    samples_per_symbol = 10 # Symbol rate = 0.1 Hz
+    cfo = 0.05
+    N = signal_length
+
+    if conjugate:
+        cycle_frequency_check = 1/(samples_per_symbol) * np.arange(-30, 30) + 2*cfo
+    else:
+        cycle_frequency_check = 1/(samples_per_symbol) * np.arange(1, 30)
+
+    cycle_frequency_check = np.round(cycle_frequency_check[np.abs(cycle_frequency_check) < alpha_max], 2)
+
+    error = np.zeros(len(cycle_frequency_check))
+    error_magnitude = np.zeros(len(cycle_frequency_check))
+    energy = np.zeros(len(cycle_frequency_check))
+    phase = np.zeros((no_of_run, len(cycle_frequency_check)))
+
+    for j in range(no_of_run):
+        trial_rng = np.random.default_rng() if rng is None else rng
+        bpsk_signal = create_rect_bpsk_signal(N, samples_per_symbol, rng=trial_rng)
+        bpsk_signal_cfo = add_cfo(bpsk_signal, cfo)
+        bpsk_signal_noise_cfo = add_awgn_snr(bpsk_signal_cfo, desired_snr=snr, rng=trial_rng)[:N + extra_samples]
+
+        if fam:
+            spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, L=Np/4, conjugate=conjugate)
+        else:
+            spectral_corr, f, alpha = func_lambda(bpsk_signal_noise_cfo, Np=Np, conjugate=conjugate)
+
+        if not np.iscomplexobj(spectral_corr):
+            raise ValueError("The estimator returns magnitudes only, so its phase cannot be checked.")
+
+        # Same slices as validation_test
+        mask_principal = np.abs(f) + np.abs(alpha / 2.0) < 0.5
+        alpha = np.round(alpha * N) / N
+
+        for k in range(len(cycle_frequency_check)):
+            mask = (np.abs(alpha - cycle_frequency_check[k]) <= 1/(2*N)) & mask_principal
+            scd_slice = spectral_corr[mask]
+            scd_ref = bpsk_scf_signed(f[mask], cycle_frequency_check[k], samples_per_symbol, cfo, conjugate=conjugate)
+
+            # Least-squares fit of one complex constant, and of one real gain on the magnitudes
+            constant = np.vdot(scd_ref, scd_slice) / np.vdot(scd_ref, scd_ref)
+            gain = np.vdot(np.abs(scd_ref), np.abs(scd_slice)) / np.vdot(scd_ref, scd_ref)
+
+            error[k] += np.sum(np.abs(scd_slice - constant * scd_ref)**2)
+            error_magnitude[k] += np.sum((np.abs(scd_slice) - gain * np.abs(scd_ref))**2)
+            energy[k] += np.sum(np.abs(scd_slice)**2)
+            phase[j, k] = np.degrees(np.angle(constant))
+
+    residual = np.sqrt(np.sum(error) / np.sum(energy))
+    residual_magnitude = np.sqrt(np.sum(error_magnitude) / np.sum(energy))
+
+    print(f"{name} phase structure: residual {residual:.3f} (magnitude only: {residual_magnitude:.3f}), threshold {threshold}")
+
+    return residual < threshold, {
+        "residual": residual,
+        "residual_magnitude_only": residual_magnitude,
+        "cycle_frequencies": cycle_frequency_check,
+        "residual_per_cycle_frequency": np.sqrt(error / energy),
+        "phase_degrees": phase,
+    }
 
 def coherence_validation_test(func_lambda, name="algorithm", Np=512, snr=10, max_log_2=19, no_of_run=1, alpha_max = 1.0, conjugate=False, plot=True, save=True, fam=False):
     start_i = 10 # or 1024 (change if you want higher Np)
