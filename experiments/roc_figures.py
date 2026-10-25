@@ -5,10 +5,9 @@
 
 Same layout as the cells of roc_test_extra.ipynb that drew the originals.
 
-Fig. 6 takes every curve from the revision runs (N = 4096, Np = 64, 500 trials). Fig. 7 keeps
-the notebook's scores for the SSCA, FAM and 2D-FFT, which the revision runs reproduce to within
-0.006 in mean AUC, and replaces the Fast-SC points with the revision runs over Np. Execution times
-are the minima from experiments/pareto_benchmark.py, every configuration measured in one session
+Fig. 6 takes every curve from the revision runs (N = 4096, Np = 64, 500 trials), and so does Fig. 7
+for every configuration and Np (the notebook's scores used the GMSK generator before its fix). Execution
+times are the minima from experiments/pareto_benchmark.py, every configuration measured in one session
 with the current code (the notebook's older timings had unreliable minima for the FAM at Np >= 64).
 
 Writes fig/roc_compare_subplot_rev_2.png and fig/pareto_front_rev.png.
@@ -29,6 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SNR = [0, -5, -10]
 AXIS_GREY = "#898781"
 NPS = [8, 16, 32, 64, 128, 256]
+# Drawn at the printed size (as included in the paper: Fig. 6 9 x 5 cm, Fig. 7 9 x 7 cm), so the fonts
+# print at the sizes set here and LaTeX does not rescale or stretch the figures
+CM = 1 / 2.54
+FIG6_SIZE, FIG7_SIZE = (9 * CM, 5 * CM), (9 * CM, 7 * CM)
+TICK, LABEL, SMALL = 6.5, 7, 6
 
 
 def roc_figure():
@@ -43,28 +47,34 @@ def roc_figure():
              ("ssca_flattop", "SSCA flattop", "green", "^"), ("fastsc", "FastSC", "brown", "."),
              ("2dfft", "2D-FFT", "pink", "*"), ("2dfft_flattop", "2D-FFT flattop", "purple", "+")]
 
-    fig, axes = plt.subplots(1, 2, figsize=(6, 3))
+    fig, axes = plt.subplots(1, 2, figsize=FIG6_SIZE)
     for ax, scd in zip(axes, ("non-conjugate", "conjugate")):
         for estimator, label, color, marker in lines:
             if scd == "conjugate" and estimator == "fastsc":
                 continue
             ax.plot(SNR, scores(estimator, scd), label=label, marker=marker, linestyle="--", color=color,
-                    linewidth=1.5, markersize=7)
+                    linewidth=0.9, markersize=3.5)
         ax.set_xlim(0.2, -10.2)
         ax.set_xticks(SNR)
-        ax.set_xlabel("SNR (dB)")
-    axes[0].set_ylabel("Total AUC Score (Normalized)")
+        ax.set_xlabel("SNR (dB)", fontsize=LABEL, labelpad=1)
+        ax.tick_params(labelsize=TICK, length=2, pad=1.5)
+    axes[0].set_ylabel("Total AUC Score (Normalized)", fontsize=SMALL, labelpad=1)
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=5, fontsize=8, bbox_to_anchor=(0.5, 1.02), frameon=False)
+    fig.legend(handles, labels, loc="upper center", ncol=4, fontsize=SMALL, bbox_to_anchor=(0.5, 1.0), frameon=False,
+               columnspacing=0.9, handletextpad=0.3, handlelength=1.8, borderaxespad=0.1)
+    fig.subplots_adjust(left=0.11, right=0.955, bottom=0.17, top=0.79, wspace=0.24)
     return fig
 
 
-def fastsc_score(Np):
-    """Mean AUC over the three signals and the three SNRs, from the revision runs."""
+def pareto_score(estimator, Np):
+    """Non-conjugate mean AUC over the three signals and the three SNRs, from the revision runs."""
     values = []
     for snr in SNR:
-        path = ROOT / "data" / "revision" / "roc" / f"roc_fastsc_Np{Np}_N4096_snr{snr}_nc.npz"
+        path = ROOT / "data" / "revision" / "roc" / f"roc_{estimator}_Np{Np}_N4096_snr{snr}_nc.npz"
         statistic = np.load(path)["statistic"]  # missing until revision_runs.py has finished them
+        second = path.with_name(path.stem + "_b2.npz")  # second batch of trials (--second-batch), pooled
+        if second.exists():
+            statistic = np.concatenate((statistic, np.load(second)["statistic"]), axis=2)
         values.append(np.mean([auc(present, absent) for present, absent in statistic]))
     return np.mean(values)
 
@@ -93,18 +103,14 @@ def benchmark_minima():
 
 def pareto_figure():
     minima = benchmark_minima()
-    # Score file name, benchmark configuration, label
-    algorithms = [("ssca", "ssca", "SSCA_{}"), ("fam", "fam", "FAM_{}"), ("ssca_flat", "ssca_flattop", "SSCA_{}f"),
-                  ("fam_flat", "fam_flattop", "FAM_{}f"), ("fastsc", "fastsc", "FastSC_{}"),
-                  ("scf_2d_fft", "2dfft", "2D-FFT_{}"), ("scf_2d_fft_flat", "2dfft_flattop", "2D-FFT_{}f")]
+    # Configuration (revision runs and benchmark), label
+    algorithms = [("ssca", "SSCA_{}"), ("fam", "FAM_{}"), ("ssca_flattop", "SSCA_{}f"), ("fam_flattop", "FAM_{}f"),
+                  ("fastsc", "FastSC_{}"), ("2dfft", "2D-FFT_{}"), ("2dfft_flattop", "2D-FFT_{}f")]
     scores, times, names = [], [], []
-    for score_name, time_name, label in algorithms:
+    for name, label in algorithms:
         for Np in NPS:
-            if score_name == "fastsc":
-                scores.append(fastsc_score(Np))
-            else:
-                scores.append(np.mean(np.load(ROOT / "data" / f"roc_test_{score_name}_{Np}_score_non_conjugate.npy")) / 3)
-            times.append(minima[(time_name, Np)])
+            scores.append(pareto_score(name, Np))
+            times.append(minima[(name, Np)])
             names.append(label.format(Np))
     scores, times = np.array(scores), np.array(times)
     front = find_pareto_front(scores, times)
@@ -114,16 +120,16 @@ def pareto_figure():
     # Same order as `algorithms` above.
     families = [("SSCA", "blue", "x"), ("FAM", "red", "o"), ("SSCA flattop", "green", "^"), ("FAM flattop", "orange", "s"),
                 ("FastSC", "brown", "."), ("2D-FFT", "pink", "*"), ("2D-FFT flattop", "purple", "+")]
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig, ax = plt.subplots(figsize=FIG7_SIZE)
     ax.set_xscale("log", base=2)
     order = np.argsort(times[front])
-    ax.plot(times[front][order], scores[front][order], color="black", linestyle="--", linewidth=1.1, alpha=0.8,
+    ax.plot(times[front][order], scores[front][order], color="black", linestyle="--", linewidth=0.8, alpha=0.8,
             zorder=1, label="Pareto front")
-    ax.scatter(times[front], scores[front], s=170, facecolors="none", edgecolors="black", linewidths=1.1, zorder=4)
+    ax.scatter(times[front], scores[front], s=45, facecolors="none", edgecolors="black", linewidths=0.7, zorder=4)
     for i, (label, color, marker) in enumerate(families):
         part = slice(i * len(NPS), (i + 1) * len(NPS))
-        ax.plot(times[part], scores[part], color=color, linewidth=0.8, alpha=0.5, zorder=2)
-        ax.plot(times[part], scores[part], linestyle="none", marker=marker, ms=7, color=color, mew=1.5, label=label,
+        ax.plot(times[part], scores[part], color=color, linewidth=0.6, alpha=0.5, zorder=2)
+        ax.plot(times[part], scores[part], linestyle="none", marker=marker, ms=3.5, color=color, mew=0.9, label=label,
                 zorder=3)
 
     labels = np.array([str(Np) for _ in families for Np in NPS])
@@ -147,11 +153,11 @@ def pareto_figure():
     avoid_x, avoid_y = list(times), list(scores)
     for flattop, side in ((False, -1), (True, 1)):
         group = is_2dfft & (is_flattop == flattop)
-        y_text = spread(scores[group], 0.0062)
+        y_text = spread(scores[group], 0.0078)
         x_text = (times[group].min() / 2.2) if side < 0 else (times[group].max() * 1.45)
         for x, y, yt, text in zip(times[group], scores[group], y_text, labels[group]):
             ax.annotate(text, (x, y), xytext=(x_text, yt), ha="right" if side < 0 else "left", va="center",
-                        fontsize=7, arrowprops=dict(arrowstyle="-", color=AXIS_GREY, linewidth=0.5, shrinkA=1, shrinkB=3))
+                        fontsize=SMALL - 0.5, arrowprops=dict(arrowstyle="-", color=AXIS_GREY, linewidth=0.4, shrinkA=1, shrinkB=3))
             for step in np.linspace(0, 0.45, 6):  # the label and its leader line, in log2 units
                 avoid_x.append(x_text * 2**(side * step))
                 avoid_y.append(yt)
@@ -159,23 +165,25 @@ def pareto_figure():
             avoid_y += list(np.linspace(y, yt, 4))
     others = ~is_2dfft
     ta.allocate(ax, times[others], scores[others], list(labels[others]), x_scatter=avoid_x, y_scatter=avoid_y,
-                textsize=7, draw_lines=True, linewidth=0.5, linecolor=AXIS_GREY, margin=0.01, min_distance=0.01,
+                textsize=SMALL - 0.5, draw_lines=True, linewidth=0.4, linecolor=AXIS_GREY, margin=0.01, min_distance=0.01,
                 max_distance=0.08, nbr_candidates=500, draw_all=True)
 
-    ax.set_xlabel("Minimum execution time (seconds, log scale)")
-    ax.set_ylabel("Average AUC across SNR")
-    ax.set_title("Pareto front: detection vs. speed trade-off")
+    ax.set_xlabel("Minimum execution time (seconds, log scale)", fontsize=LABEL, labelpad=1)
+    ax.set_ylabel("Average AUC across SNR", fontsize=LABEL, labelpad=1)
+    ax.tick_params(labelsize=TICK, length=2, pad=1.5)
     ax.grid(True, alpha=0.3, which="both")
-    ax.legend(loc="lower right", fontsize=7, ncol=2, frameon=False, title="Numbers: $N_p$", title_fontsize=7)
-    fig.tight_layout()
+    ax.legend(loc="lower right", fontsize=SMALL - 0.5, ncol=2, frameon=False, title="Numbers: $N_p$",
+              title_fontsize=SMALL - 0.5, columnspacing=0.6, handletextpad=0.2, labelspacing=0.25, borderaxespad=0.2,
+              handlelength=1.3)
+    fig.subplots_adjust(left=0.13, right=0.97, bottom=0.13, top=0.98)
     print("Pareto-optimal:", ", ".join(f"{n} ({s:.3f})" for n, s, t in sorted(zip(np.array(names)[front], scores[front], times[front]), key=lambda z: z[2])))
     print("Fast-SC:", ", ".join(f"{Np}: {s:.3f}" for Np, s in zip(NPS, scores[4*len(NPS):5*len(NPS)])))
     return fig
 
 
 if __name__ == "__main__":
-    roc_figure().savefig(ROOT / "fig" / "roc_compare_subplot_rev_2.png", dpi=300, bbox_inches="tight")
+    roc_figure().savefig(ROOT / "fig" / "roc_compare_subplot_rev_2.png", dpi=300)
     print("fig/roc_compare_subplot_rev_2.png written")
     if "--roc-only" not in sys.argv:
-        pareto_figure().savefig(ROOT / "fig" / "pareto_front_rev.png", dpi=300, bbox_inches="tight")
+        pareto_figure().savefig(ROOT / "fig" / "pareto_front_rev.png", dpi=300)
         print("fig/pareto_front_rev.png written")

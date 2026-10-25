@@ -25,6 +25,8 @@ def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT
     rng : numpy.random.Generator, optional
         Random number generator instance (default: np.random.default_rng()).
         Used to generate the random bit sequence.
+    normalize : bool, optional
+        Passed to gaussian_design; has no effect on the output, since the filter is rescaled to unit gain.
     
 
     Returns:
@@ -50,7 +52,11 @@ def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT
     MSK_symbol = 2*bit_seq - 1
     MSK_symbol_upsampled = np.zeros(n)
     MSK_symbol_upsampled[::samples_per_symbol] = MSK_symbol
-    MSK_symbol_gauss = scipy.signal.oaconvolve(MSK_symbol_upsampled, gaussian_design(BT, samples_per_symbol, gauss_filter_span, normalize=normalize), mode="same")
+    # Unit gain, so that each symbol turns the phase by h/2 = 1/4 cycle as in MSK: the taps must sum to the
+    # number of samples per symbol (the designed filter sums to about 1.1 times that, i.e. h = 0.55)
+    gaussian_filter = gaussian_design(BT, samples_per_symbol, gauss_filter_span, normalize=normalize)
+    gaussian_filter = gaussian_filter * samples_per_symbol / np.sum(gaussian_filter)
+    MSK_symbol_gauss = scipy.signal.oaconvolve(MSK_symbol_upsampled, gaussian_filter, mode="same")
     
     delta_f = 1/(2*samples_per_symbol) * modulation_index
 
@@ -124,3 +130,59 @@ def create_cpfsk_signal(number_of_symbols, samples_per_symbol, modulation_index=
         plot_fsk_signal(cpfsk_signal, cpfsk_symbols, phi_of_t, delta_f, f_carrier, f"Continuous Phase FSK modulation index={modulation_index}, f_c={f_carrier}")
     
     return cpfsk_signal, cpfsk_symbols, phi_of_t
+
+def create_incoherent_fsk_signal(number_of_symbols, samples_per_symbol, number_of_levels=2, delta_f=0.01, f_carrier=0.05, plot=False, rng=np.random.default_rng()):
+    """
+    Generate a Incoherent Phase FSK signal.
+    
+    Parameters:
+    -----------
+    number_of_symbols : array_like
+        Total number of symbols in the signal
+    samples_per_symbol : int
+        Number of samples per symbol (symbol period)
+    number_of_levels: int
+        Number of frequency levels. Must be power of 2.
+    delta_f : float
+        Determines frequency deviation (default is 0.002)
+    f_carrier : float
+        Carrier frequency (normalized to fs) (default is 0.01) 
+    rng : numpy.random.Generator, optional
+        Random number generator for symbol generation (default is numpy's default RNG)
+    plot : bool, optional
+        Whether to plot the signal components (default is False)
+
+    Returns:
+    --------
+    tuple
+        (fsk_signal, fsk_symbol, instantaneous_phase)
+    """
+
+    if number_of_symbols <= 0:
+        raise ValueError("Error: Number of symbols must be postive and non zero")
+    elif samples_per_symbol <= 0:
+        raise ValueError("Error: Samples per symbol must be postive and non zero")
+    elif np.mod(np.log2(number_of_levels), 1) != 0 or number_of_levels <= 0:
+        raise ValueError("Error: Number of levels must be a power of 2 for FSK")
+    elif not isinstance(samples_per_symbol, int):
+        raise TypeError("Error: Samples per symbol must be an integer")
+    elif not isinstance(number_of_symbols, int):
+        raise TypeError("Error: Number of symbols must be an integer")
+        
+    n = number_of_symbols * samples_per_symbol
+    t = np.linspace(0, n, n)
+
+    coding = np.linspace(-1, 1, number_of_levels)
+    FSK_symbol = rng.choice(coding, number_of_symbols)
+
+    FSK_symbol_upsampled = np.repeat(FSK_symbol, samples_per_symbol)
+
+    phi_of_t = 2*np.pi*(f_carrier + delta_f*FSK_symbol_upsampled) * t
+
+    fsk_signal = np.exp(1j * phi_of_t)
+    fsk_symbols = FSK_symbol_upsampled
+
+    if plot:
+        plot_fsk_signal(fsk_signal, fsk_symbols, phi_of_t, delta_f, f_carrier, f"Incoherent {number_of_levels}FSK, df = {delta_f}, f_c={f_carrier}")
+    
+    return fsk_signal, fsk_symbols, phi_of_t

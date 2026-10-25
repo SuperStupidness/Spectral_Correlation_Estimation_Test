@@ -15,7 +15,7 @@ from scipy.signal import find_peaks
 from scipy.signal.windows import get_window
 from sklearn import metrics
 
-from .psk import create_srrc_qpsk_signal, create_rect_bpsk_signal
+from .psk import create_srrc_qpsk_signal, create_rect_bpsk_signal, create_srrc_bpsk_signal
 from .fsk import create_gmsk_signal, create_cpfsk_signal
 from .visualization.time_domain import plot_signal
 
@@ -538,17 +538,17 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
     # Create a reference CDP using no noise bpsk so we know the cycle frequency
     samples_per_symbol = 10 # Symbol rate = 0.1 Hz
     cfo = 0.05
-    bandwidth_time = 0.3
-    filter_span = 21
+    srrc_filter_span = 21
+    beta = 0.1
 
     bpsk_cf = 2*cfo + 4 * 1/samples_per_symbol
     msk_cf = cfo + 2 * 1/samples_per_symbol
-    gmsk_cf = cfo + 1 * 1/samples_per_symbol
+    srrc_bpsk_cf = 2*cfo + 1/samples_per_symbol
 
     print("Starting conjugate ROC test...")
     print(f"  Rect BPSK cycle frequency: α = {bpsk_cf:.4f}")
     print(f"  MSK cycle frequency:       α = {msk_cf:.4f}")
-    print(f"  GMSK cycle frequency:      α = {gmsk_cf:.4f}")
+    print(f"  SRRC BPSK cycle frequency: α = {srrc_bpsk_cf:.4f}")
         
     average_pf_bpsk = np.zeros((len(snr), threshold_resolution))
     average_pd_bpsk = np.zeros((len(snr), threshold_resolution))
@@ -556,8 +556,8 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
     average_pf_msk = np.zeros((len(snr), threshold_resolution))
     average_pd_msk = np.zeros((len(snr), threshold_resolution))
 
-    average_pf_gmsk = np.zeros((len(snr), threshold_resolution))
-    average_pd_gmsk = np.zeros((len(snr), threshold_resolution))
+    average_pf_srrc_bpsk = np.zeros((len(snr), threshold_resolution))
+    average_pd_srrc_bpsk = np.zeros((len(snr), threshold_resolution))
 
     roc_auc = np.zeros(len(snr))
     
@@ -572,8 +572,8 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
         true_positive_msk = np.zeros((1, threshold_resolution))
         false_positive_msk = np.zeros((1, threshold_resolution))
         
-        true_positive_gmsk = np.zeros((1, threshold_resolution))
-        false_positive_gmsk = np.zeros((1, threshold_resolution))
+        true_positive_srrc_bpsk = np.zeros((1, threshold_resolution))
+        false_positive_srrc_bpsk = np.zeros((1, threshold_resolution))
         
         for j in range(no_of_simulation*2):
             # Half signal + noise, half only noise
@@ -584,20 +584,20 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
             msk_signal, _, _ = create_cpfsk_signal(N, samples_per_symbol, modulation_index=0.5, f_carrier=cfo) 
             msk_signal_noise_cfo = add_awgn_snr(msk_signal, desired_snr=snr[i])
 
-            gmsk_signal, _, _ = create_gmsk_signal(N, samples_per_symbol, f_carrier=cfo, BT=bandwidth_time, gauss_filter_span=filter_span)
-            gmsk_signal_noise_cfo = add_awgn_snr(gmsk_signal, desired_snr=snr[i])
+            srrc_bpsk_signal = add_cfo(create_srrc_bpsk_signal(N, samples_per_symbol, srrc_filter_span, beta), cfo)
+            srrc_bpsk_signal_noise_cfo = add_awgn_snr(srrc_bpsk_signal, desired_snr=snr[i])
             
             # Even for signal present
             if j % 2 == 0:
                 test_signal_bpsk = bpsk_signal_noise_cfo[:N]
                 test_signal_msk = msk_signal_noise_cfo[:N]
-                test_signal_gmsk = gmsk_signal_noise_cfo[:N]
+                test_signal_srrc_bpsk = srrc_bpsk_signal_noise_cfo[:N]
                 signal_flag = True
             # Odd for noise only
             else:
                 test_signal_bpsk = (bpsk_signal_noise_cfo - bpsk_signal_cfo)[:N]
                 test_signal_msk = (msk_signal_noise_cfo - msk_signal)[:N]
-                test_signal_gmsk = (gmsk_signal_noise_cfo - gmsk_signal)[:N]
+                test_signal_srrc_bpsk = (srrc_bpsk_signal_noise_cfo - srrc_bpsk_signal)[:N]
                 signal_flag = False
 
             if fam:
@@ -605,20 +605,20 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
 
                 spectral_coherence_msk_c, _, _ = func_lambda(test_signal_msk, Np=Np, L=L, conjugate=True, coherence=True)
 
-                spectral_coherence_gmsk_c, _, _ = func_lambda(test_signal_gmsk, Np=Np, L=L, conjugate=True, coherence=True)
+                spectral_coherence_srrc_bpsk_c, _, _ = func_lambda(test_signal_srrc_bpsk, Np=Np, L=L, conjugate=True, coherence=True)
             else:
                 spectral_coherence_bpsk_c, _, alpha = func_lambda(test_signal_bpsk, Np=Np, conjugate=True, coherence=True)
 
                 spectral_coherence_msk_c, _, _ = func_lambda(test_signal_msk, Np=Np, conjugate=True, coherence=True)
 
-                spectral_coherence_gmsk_c, _, _ = func_lambda(test_signal_gmsk, Np=Np, conjugate=True, coherence=True)
+                spectral_coherence_srrc_bpsk_c, _, _ = func_lambda(test_signal_srrc_bpsk, Np=Np, conjugate=True, coherence=True)
             spectral_coherence_bpsk_c = np.abs(spectral_coherence_bpsk_c)  # handle complex output
             spectral_coherence_msk_c  = np.abs(spectral_coherence_msk_c)
-            spectral_coherence_gmsk_c = np.abs(spectral_coherence_gmsk_c)
+            spectral_coherence_srrc_bpsk_c = np.abs(spectral_coherence_srrc_bpsk_c)
 
             coh_max_bpsk = []
             coh_max_msk = []
-            coh_max_gmsk = []
+            coh_max_srrc_bpsk = []
 
             # alpha binning. Assuming cycle frequency resolution is N
             # alpha = np.round(alpha * N) / N
@@ -636,27 +636,27 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
             mask_pos_1_nc_msk = np.abs(alpha - msk_cf) <= resolution
             coh_max_msk.append(np.max(spectral_coherence_msk_c[mask_pos_1_nc_msk]))
 
-            # Extract maximum coh at alpha = 0.15 for conj GMSK SCD
-            mask_pos_15_c_gmsk = np.abs(alpha - gmsk_cf) <= resolution
-            coh_max_gmsk.append(np.max(spectral_coherence_gmsk_c[mask_pos_15_c_gmsk]))
+            # Extract maximum coh at alpha = 0.2 for conj SRRC BPSK SCD
+            mask_pos_2_c_srrc_bpsk = np.abs(alpha - srrc_bpsk_cf) <= resolution
+            coh_max_srrc_bpsk.append(np.max(spectral_coherence_srrc_bpsk_c[mask_pos_2_c_srrc_bpsk]))
 
             coh_max_bpsk = np.array(coh_max_bpsk).reshape((-1, 1))
             coh_max_msk = np.array(coh_max_msk).reshape((-1, 1))
-            coh_max_gmsk = np.array(coh_max_gmsk).reshape((-1, 1))
+            coh_max_srrc_bpsk = np.array(coh_max_srrc_bpsk).reshape((-1, 1))
 
             # Check if magnitude pass threshold
             cf_bpsk_detected = coh_max_bpsk >= threshold
             cf_msk_detected = coh_max_msk >= threshold
-            cf_gmsk_detected = coh_max_gmsk >= threshold
+            cf_srrc_bpsk_detected = coh_max_srrc_bpsk >= threshold
 
             if signal_flag:
                 true_positive_bpsk += cf_bpsk_detected.astype(int)
                 true_positive_msk += cf_msk_detected.astype(int)
-                true_positive_gmsk += cf_gmsk_detected.astype(int)
+                true_positive_srrc_bpsk += cf_srrc_bpsk_detected.astype(int)
             else:
                 false_positive_bpsk += cf_bpsk_detected.astype(int)
                 false_positive_msk += cf_msk_detected.astype(int)
-                false_positive_gmsk += cf_gmsk_detected.astype(int)
+                false_positive_srrc_bpsk += cf_srrc_bpsk_detected.astype(int)
 
         # len(coh_max) is only relevant if you want to check other alphas
         average_pd_bpsk[i, :] = true_positive_bpsk/(no_of_simulation)
@@ -665,8 +665,8 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
         average_pd_msk[i, :] = true_positive_msk/(no_of_simulation)
         average_pf_msk[i, :] = false_positive_msk/(no_of_simulation)
 
-        average_pd_gmsk[i, :] = true_positive_gmsk/(no_of_simulation)
-        average_pf_gmsk[i, :] = false_positive_gmsk/(no_of_simulation)
+        average_pd_srrc_bpsk[i, :] = true_positive_srrc_bpsk/(no_of_simulation)
+        average_pf_srrc_bpsk[i, :] = false_positive_srrc_bpsk/(no_of_simulation)
         #roc_auc[i] = metrics.auc(average_pf[i, :], average_pd[i, :])
         #plt.plot(average_pf[i, :], average_pd[i, :], label=f"{snr[i]}dB SNR, AUC={np.round(roc_auc[i], 3)}")
         
@@ -692,20 +692,20 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
         axs[1].plot([0, 1], [0, 1], color='red', linestyle='--')
         # axs[1, j].legend()
 
-        roc_auc_gmsk = np.round(metrics.auc(average_pf_gmsk[i, :], average_pd_gmsk[i, :]), 3)
-        axs[2].plot(average_pf_gmsk[i, :], average_pd_gmsk[i, :], label=f"{snr[i]}dB SNR")
+        roc_auc_srrc_bpsk = np.round(metrics.auc(average_pf_srrc_bpsk[i, :], average_pd_srrc_bpsk[i, :]), 3)
+        axs[2].plot(average_pf_srrc_bpsk[i, :], average_pd_srrc_bpsk[i, :], label=f"{snr[i]}dB SNR")
         axs[2].plot([0, 1], [0, 1], color='red', linestyle='--')
         # axs[2, j].legend()
 
         axs[0].set_title("Conjugate Rect BPSK")
         axs[1].set_title("Conjugate MSK")
-        axs[2].set_title("Conjugate GMSK")
+        axs[2].set_title("Conjugate SRRC BPSK")
 
-        roc_auc_total[i] += roc_auc_bpsk + roc_auc_msk + roc_auc_gmsk
+        roc_auc_total[i] += roc_auc_bpsk + roc_auc_msk + roc_auc_srrc_bpsk
 
         roc_auc[i, 0] = roc_auc_bpsk
         roc_auc[i, 1] = roc_auc_msk
-        roc_auc[i, 2] = roc_auc_gmsk
+        roc_auc[i, 2] = roc_auc_srrc_bpsk
         
         print(f"{snr[i]}dB SNR Score: {roc_auc_total[i]:.3f}/3")
 
@@ -716,8 +716,8 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
 
     plt.show()
 
-    average_pd = np.concatenate((average_pd_bpsk, average_pd_msk, average_pd_gmsk) ,axis=1)
-    average_pf = np.concatenate((average_pf_bpsk, average_pf_msk, average_pf_gmsk) ,axis=1)
+    average_pd = np.concatenate((average_pd_bpsk, average_pd_msk, average_pd_srrc_bpsk) ,axis=1)
+    average_pf = np.concatenate((average_pf_bpsk, average_pf_msk, average_pf_srrc_bpsk) ,axis=1)
     
     return average_pd, average_pf, roc_auc, threshold_resolution
 
@@ -1742,4 +1742,155 @@ def cyclic_domain_profile_test(func_lambda, Np=64, L=16, snr=10, signal_length=3
         "erroneous_peaks": erroneous_peaks,
         "threshold_used": threshold,
     }
+
+
+def _coherence(func_lambda, signal, Np, L, conjugate, fam):
+    if fam:
+        coherence, f, alpha = func_lambda(signal, Np=Np, L=L, conjugate=conjugate, coherence=True)
+    else:
+        coherence, f, alpha = func_lambda(signal, Np=Np, conjugate=conjugate, coherence=True)
+    return np.abs(np.asarray(coherence)).ravel(), np.asarray(f).ravel(), np.asarray(alpha).ravel()
+
+
+def signal_identification_test(func_lambda, signals=None, Np=64, L=16, snr=10, signal_length=32768, conjugate=False,
+                               fam=False, factor=3.0, rng=None, plot=True):
+    """Cycle frequency identification test on the signals of scf_test.signals.
+
+    For each signal, the cyclic domain profile I(alpha) = max_f |C(f, alpha)| of one realization is compared with
+    the signal's significant cycle frequencies from theory. The floor is the median of the profile away from them.
+    An expected cycle frequency is found when the profile within two bins of it exceeds `factor` times the floor;
+    a spurious peak is any other peak above that level, outside 1/Np of an expected cycle frequency (its cycle
+    leakage), outside the edges |alpha| > 1 - 1/Np and, for the non-conjugate SCD, outside |alpha| < 2/Np (the
+    alpha = 0 ridge). Cycle frequencies
+    outside the estimator's output range (e.g. the Fast-SC's alpha <= fs/2) are not counted.
+
+    Returns
+    -------
+    results : dict
+        For each signal: expected, found and missing cycle frequencies, spurious peaks, the floor, and the
+        contrast (weakest found feature over the floor).
+    """
+    from .signals import SIGNALS, expected_cycle_frequencies, make_signal
+
+    if signals is None:
+        signals = [name for name in SIGNALS if not conjugate or SIGNALS[name].conjugate]
+    rng = np.random.default_rng() if rng is None else rng
+    results = {}
+
+    if plot:
+        fig, axs = plt.subplots(len(signals), 1, figsize=(8, 1.3 * len(signals)), sharex=True, squeeze=False)
+
+    for row, name in enumerate(signals):
+        x, _ = make_signal(name, signal_length, snr=snr, rng=rng)
+        coherence, _, alpha = _coherence(func_lambda, x, Np, L, conjugate, fam)
+        cf, cdp = compute_cdp(coherence, alpha)
+        if not conjugate:
+            keep = cf > 0
+            cf, cdp = cf[keep], cdp[keep]
+
+        expected = expected_cycle_frequencies(name, conjugate)
+        expected = expected[(expected >= cf.min()) & (expected <= cf.max())]
+        tolerance = 2 / signal_length
+        guard = np.zeros(len(cf), bool)
+        for e in expected:
+            guard |= np.abs(cf - e) <= 1 / Np
+        guard |= np.abs(cf) > 1 - 1 / Np
+        if not conjugate:
+            guard |= cf < 2 / Np
+        floor = np.median(cdp[~guard]) if np.any(~guard) else np.median(cdp)
+        level = factor * floor
+
+        heights = np.array([cdp[np.abs(cf - e) <= tolerance].max() if np.any(np.abs(cf - e) <= tolerance) else 0
+                            for e in expected])
+        found = expected[heights > level]
+        peaks, _ = find_peaks(np.pad(cdp, 1), height=level, distance=3)
+        peaks = peaks - 1
+        spurious = cf[peaks[~guard[peaks]]] if len(peaks) else np.array([])
+
+        results[name] = {
+            "expected": expected,
+            "found": found,
+            "missing": np.setdiff1d(expected, found),
+            "spurious": spurious,
+            "floor": floor,
+            "contrast": heights[heights > level].min() / floor if np.any(heights > level) else 0.0,
+        }
+
+        if plot:
+            ax = axs[row, 0]
+            ax.plot(cf, cdp, color="0.3", linewidth=0.6)
+            for e in expected:
+                ax.axvline(e, color="tab:green", linewidth=0.6, alpha=0.5, zorder=0)
+            for s in spurious:
+                ax.axvline(s, color="tab:red", linewidth=0.8, linestyle=":")
+            ax.axhline(level, color="tab:orange", linewidth=0.6, linestyle="--")
+            ax.set_ylim(0, None)
+            ax.text(0.01, 0.75, f"{SIGNALS[name].label}: {len(found)}/{len(expected)} found, "
+                                f"{len(spurious)} spurious", transform=ax.transAxes, fontsize=8)
+
+    if plot:
+        axs[-1, 0].set_xlabel(f"{'Conjugate' if conjugate else 'Non-conjugate'} cycle frequency")
+        fig.tight_layout()
+        plt.show()
+
+    return results
+
+
+def signal_robustness_test(func_lambda, signals=None, Np=64, L=16, N=4096, snr=(0, -5, -10), trials=500,
+                           conjugate=False, fam=False, rng=None, plot=True):
+    """Robustness test (ROC) on the signals of scf_test.signals.
+
+    Statistic: max_f |C(f, alpha_0)| on the slice alpha_0 of each signal (roc_alpha_nc or roc_alpha_c in the
+    catalogue). H1: the signal in AWGN at the given SNR; H0: the same noise without the signal. Signals without
+    a feature of the requested kind are skipped.
+
+    Returns
+    -------
+    auc : dict
+        For each signal, the AUC at each SNR.
+    statistics : dict
+        For each signal, an array (SNR, [present, absent], trial) of the statistic.
+    """
+    from .signals import SIGNALS, make_signal
+
+    if signals is None:
+        signals = list(SIGNALS)
+    signals = [name for name in signals
+               if (SIGNALS[name].roc_alpha_c if conjugate else SIGNALS[name].roc_alpha_nc) is not None]
+    rng = np.random.default_rng() if rng is None else rng
+    auc, statistics = {}, {}
+
+    for name in signals:
+        alpha_0 = SIGNALS[name].roc_alpha_c if conjugate else SIGNALS[name].roc_alpha_nc
+        values = np.zeros((len(snr), 2, trials))
+        slice_index = None
+        for i, s in enumerate(snr):
+            for t in range(trials):
+                noisy, clean = make_signal(name, N, snr=s, rng=rng)
+                for k, x in enumerate((noisy, noisy - clean)):
+                    coherence, _, alpha = _coherence(func_lambda, x, Np, L, conjugate, fam)
+                    if slice_index is None:
+                        resolution = np.median(np.diff(np.unique(np.round(alpha, 10))))
+                        slice_index = np.flatnonzero(np.abs(alpha - alpha_0) <= resolution / 2)
+                    values[i, k, t] = coherence[slice_index].max()
+        statistics[name] = values
+        labels = np.concatenate([np.ones(trials), np.zeros(trials)])
+        auc[name] = np.array([metrics.roc_auc_score(labels, values[i].ravel()) for i in range(len(snr))])
+
+    if plot and auc:
+        fig, ax = plt.subplots(figsize=(max(6, 0.45 * len(auc)), 3))
+        width = 0.8 / len(snr)
+        for i, s in enumerate(snr):
+            ax.bar(np.arange(len(auc)) + (i - (len(snr) - 1) / 2) * width, [auc[n][i] for n in auc], width,
+                   label=f"{s} dB")
+        ax.axhline(0.5, color="0.5", linewidth=0.6, linestyle=":")
+        ax.set_xticks(np.arange(len(auc)), [SIGNALS[n].label for n in auc], rotation=60, ha="right", fontsize=8)
+        ax.set_ylabel("AUC")
+        ax.set_ylim(0.4, 1.02)
+        ax.set_title(f"{'Conjugate' if conjugate else 'Non-conjugate'} robustness test, N = {N}, Np = {Np}")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        plt.show()
+
+    return auc, statistics
 

@@ -121,9 +121,9 @@ def convergence_figure():
         band(ax, counts[keep], [half_width_percent(job['rmse_complex'][:, index])[1][keep] for job in validation], aqua,
              f'Validation, RMSE, {name}', dashed)
 
-    ax.set(xscale='log', yscale='log', xlim=(2.6, 640), ylim=(0.18, 400),
+    ax.set(xscale='log', yscale='log', xlim=(2.6, 1300), ylim=(0.18, 400),
            xlabel='Number of trials', ylabel='95% half-width (%)')
-    plain_log_axis(ax.xaxis, [3, 5, 10, 20, 50, 100, 200, 500])
+    plain_log_axis(ax.xaxis, [3, 5, 10, 20, 50, 100, 200, 500, 1000])
     plain_log_axis(ax.yaxis, [0.3, 1, 3, 10, 30, 100])
     style(ax)
     ax.legend(loc='upper right', frameon=False, handlelength=2.2, borderaxespad=0.2, labelspacing=0.25)
@@ -141,7 +141,7 @@ def series(ax, x, y, estimator, flattop=False):
 def sensitivity_figure():
     """Cycle leakage and robustness against the signal length N (top row, Np = 64) and the channel count Np
     (bottom row, N = 4096), at 0 dB. Columns: median cycle leakage, non-conjugate AUC, conjugate AUC."""
-    fig, axes = plt.subplots(2, 3, figsize=(TEXT_WIDTH, 8.6 * CM))
+    fig, axes = plt.subplots(2, 3, figsize=(TEXT_WIDTH, 6.6 * CM))
     (leak_n, nc_n, c_n), (leak_np, nc_np, c_np) = axes
 
     def power_of_two_axis(ax):
@@ -161,7 +161,7 @@ def sensitivity_figure():
                 continue
             line = rows[rows['estimator'] == name].sort_values(column)
             series(ax, line[column], line['median'], estimator, flattop)
-        ax.set(xscale='log', yscale='log', ylabel='Median cycle leakage')
+        ax.set(xscale='log', yscale='log', ylabel='Median leakage')
         plain_log_axis(ax.yaxis, [0.02, 0.05, 0.1, 0.2, 0.5])
 
     leakage_lines(leak_n, leakage[leakage['Np'] == 64], 'N')
@@ -206,7 +206,7 @@ def sensitivity_figure():
              Line2D([], [], color=MUTED, marker='o', ms=4.5, mfc='white', mec=MUTED, mew=0.9, linestyle='--', label='flattop')]
     fig.legend(handles=keys, loc='upper center', ncol=len(keys), frameon=False, handlelength=2.4, columnspacing=1.6,
                bbox_to_anchor=(0.5, 1.01))
-    fig.subplots_adjust(left=0.065, right=0.985, bottom=0.1, top=0.88, wspace=0.28, hspace=0.62)
+    fig.subplots_adjust(left=0.065, right=0.985, bottom=0.13, top=0.84, wspace=0.28, hspace=0.85)
     return fig
 
 

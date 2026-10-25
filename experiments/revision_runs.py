@@ -38,7 +38,7 @@ import numpy as np
 import scf_test.tests as test
 from scf_test.algorithm import (ssca, fam, ssca_flattop, fam_flattop, fast_sc_wrapper,
                                 scf_2d_fft_wrapper, scf_2d_fft_flattop)
-from scf_test.psk import create_rect_bpsk_signal, create_srrc_qpsk_signal
+from scf_test.psk import create_rect_bpsk_signal, create_srrc_qpsk_signal, create_srrc_bpsk_signal
 from scf_test.fsk import create_gmsk_signal, create_cpfsk_signal
 
 BASE_SEED = 2026
@@ -106,8 +106,10 @@ def roc_job(job, rng):
     N, snr, conjugate, trials = job["N"], job["snr"], job["conj"], job["trials"]
 
     if conjugate:
-        names = ("bpsk", "msk", "gmsk")
-        cycle_freqs = (2*CFO + 4/SAMPLES_PER_SYMBOL, CFO + 2/SAMPLES_PER_SYMBOL, CFO + 1/SAMPLES_PER_SYMBOL)
+        # SRRC BPSK (same roll-off and span as the SRRC QPSK) replaces GMSK, whose conjugate features at
+        # 2 f_CFO +- f_sym / 2 are its strongest and are detected at every SNR tested
+        names = ("bpsk", "msk", "srrc_bpsk")
+        cycle_freqs = (2*CFO + 4/SAMPLES_PER_SYMBOL, CFO + 2/SAMPLES_PER_SYMBOL, 2*CFO + 1/SAMPLES_PER_SYMBOL)
     else:
         names = ("bpsk", "qpsk", "gmsk")
         cycle_freqs = (4/SAMPLES_PER_SYMBOL, 1/SAMPLES_PER_SYMBOL, 1/SAMPLES_PER_SYMBOL)
@@ -121,12 +123,15 @@ def roc_job(job, rng):
             second, _, _ = create_cpfsk_signal(N, SAMPLES_PER_SYMBOL, modulation_index=0.5, f_carrier=CFO, rng=rng)
         else:
             second = test.add_cfo(create_srrc_qpsk_signal(N, SAMPLES_PER_SYMBOL, 21, 0.1, rng=rng), CFO)
-        gmsk, _, _ = create_gmsk_signal(N, SAMPLES_PER_SYMBOL, f_carrier=CFO, BT=0.3, gauss_filter_span=21, rng=rng)
+        if conjugate:
+            third = test.add_cfo(create_srrc_bpsk_signal(N, SAMPLES_PER_SYMBOL, 21, 0.1, rng=rng), CFO)
+        else:
+            third, _, _ = create_gmsk_signal(N, SAMPLES_PER_SYMBOL, f_carrier=CFO, BT=0.3, gauss_filter_span=21, rng=rng)
 
         # Even for signal present, odd for noise only
         present = j % 2 == 0
 
-        for s, clean in enumerate((bpsk, second, gmsk)):
+        for s, clean in enumerate((bpsk, second, third)):
             noisy = test.add_awgn_snr(clean, desired_snr=snr, rng=rng)
             signal = noisy[:N] if present else (noisy - clean)[:N]
 
@@ -270,8 +275,9 @@ def run_job(job, out_dir, code_version):
         settings = {key: np.array(value) for key, value in job.items()}
         partial = path.with_suffix(".partial")
         with open(partial, "wb") as file:
+            # gmsk_fixed: run with the unit-gain GMSK generator (see gmsk_rerun.py)
             np.savez(file, **result, **settings, code_version=np.array(code_version),
-                     base_seed=np.array(BASE_SEED), elapsed_seconds=np.array(elapsed))
+                     base_seed=np.array(BASE_SEED), elapsed_seconds=np.array(elapsed), gmsk_fixed=np.array(True))
         for attempt in range(10):  # a sync client can hold the new file open for a moment
             try:
                 os.replace(partial, path)
@@ -285,7 +291,7 @@ def run_job(job, out_dir, code_version):
         return f"FAILED: {error!r}", time.perf_counter() - start
 
 
-def build_jobs(smoke=False, slow=False, extra=False):
+def build_jobs(smoke=False, slow=False, extra=False, second_batch=False):
     jobs = []
 
     def add(kind, est, Np, N, conj, trials, snr=0, tag=None, **settings):
@@ -359,6 +365,29 @@ def build_jobs(smoke=False, slow=False, extra=False):
         for Np in (256, 128, 32, 16, 8):
             for snr in SNRS:
                 add("roc", "fastsc", Np, 4096, False, 500, snr=snr)
+        # The other configurations over Np for the Pareto front (non-conjugate only), where not already run above.
+        # They replace the scores of roc_test_extra.ipynb, which used the GMSK generator before its fix.
+        for Np in (8, 16, 32, 128, 256):
+            for snr in SNRS:
+                for est in ("2dfft", "2dfft_flattop"):
+                    add("roc", est, Np, 4096, False, 500, snr=snr)
+                if Np in (8, 32, 128):
+                    for est in SSCA_FAM:
+                        add("roc", est, Np, 4096, False, 500, snr=snr)
+
+    # Second batch of 500 trials for the robustness jobs behind Figs. 6 and 7, pooled with the first by
+    # revision_summary.pool_batches (1000 trials in all). Own seeds, from the "_b2" names.
+    if second_batch:
+        for conj in (False, True):
+            for snr in SNRS:
+                for est in (*SSCA_FAM, *SLOW):
+                    add("roc", est, 64, 4096, conj, 500, snr=snr, tag="b2")
+                add("roc", "fastsc_welch", 64, 4096, conj, 500, snr=snr, tag="b2",
+                    seed_as=f"roc_fastsc_Np64_N4096_snr{snr}_nc_b2")
+        for Np in (256, 128, 32, 16, 8):
+            for snr in SNRS:
+                for est in (*SLOW, *SSCA_FAM):
+                    add("roc", est, Np, 4096, False, 500, snr=snr, tag="b2")
 
     # Validation against theory, signal lengths 2^10 .. 2^19
     for conj in (False, True):
@@ -413,12 +442,14 @@ def main():
     parser.add_argument("--slow", action="store_true", help="include the Fast-SC and 2D-FFT ROC runs")
     parser.add_argument("--extra", action="store_true",
                         help="include other signal types, the window test and high-SNR leakage")
+    parser.add_argument("--second-batch", action="store_true",
+                        help="500 more robustness trials for Figs. 6 and 7 (pooled to 1000)")
     parser.add_argument("--log", default="log.txt", help="log file name inside the output directory")
     parser.add_argument("--match", default="", help="only run jobs whose name contains this text")
     parser.add_argument("--name", help="only run the job with exactly this name")
     args = parser.parse_args()
 
-    jobs = [job for job in build_jobs(args.smoke, args.slow, args.extra)
+    jobs = [job for job in build_jobs(args.smoke, args.slow, args.extra, args.second_batch)
             if (not args.only or job["kind"] in args.only) and args.match in job["name"]
             and (not args.name or job["name"] == args.name)]
     if args.list:

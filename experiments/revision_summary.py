@@ -60,7 +60,7 @@ def roc_tables(jobs, rng):
 
         # How the result settles as trials are added (paper setting only)
         if job["N"] == 4096 and job["Np"] == 64:
-            for n in (25, 50, 100, 200, 300, 400, 500):
+            for n in (25, 50, 100, 200, 300, 400, 500, 750, 1000):
                 if n <= job["trials"]:
                     _, mean_n, low_n, high_n = mean_auc_with_interval(job["statistic"][:, :, :n], rng)
                     convergence.append(settings(job) | {"trials": n, "mean_auc": mean_n,
@@ -83,7 +83,8 @@ def leakage_table(jobs):
 
 
 def pool_batches(jobs):
-    """Join the validation jobs that were run as several batches (name, name_b2, name_b3, ...)."""
+    """Join the jobs that were run as several batches (name, name_b2, name_b3, ...): validation RMSEs over
+    trials, and robustness statistics (signal, [present, absent], trial) along the trial axis."""
     pooled = {}
     for job in jobs:
         base = re.sub(r"_b\d+$", "", job["name"])
@@ -94,7 +95,10 @@ def pool_batches(jobs):
         for key in ("rmse", "rmse_complex"):
             if key in first:
                 first[key] = np.concatenate((first[key], job[key]))
-        first["trials"] = len(first["rmse"])
+        if "statistic" in first:
+            assert list(first["signals"]) == list(job["signals"]), base
+            first["statistic"] = np.concatenate((first["statistic"], job["statistic"]), axis=2)
+        first["trials"] = first["statistic"].shape[2] if "statistic" in first else len(first["rmse"])
     return list(pooled.values())
 
 
@@ -143,7 +147,7 @@ def main():
     rng = np.random.default_rng(2026)
     pd.set_option("display.width", 250, "display.max_columns", 30, "display.float_format", "{:.3f}".format)
 
-    roc, convergence = roc_tables(load(args.data / "roc"), rng)
+    roc, convergence = roc_tables(pool_batches(load(args.data / "roc")), rng)
     leakage = leakage_table(load(args.data / "leakage"))
     validation = validation_table(load(args.data / "validation"))
     fastsc_validation = validation_table(load(args.data / "fastsc_validation"))

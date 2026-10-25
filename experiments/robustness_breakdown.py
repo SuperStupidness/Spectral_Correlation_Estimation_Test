@@ -22,7 +22,7 @@ from revision_figures import CM, TEXT_WIDTH, ESTIMATORS, MUTED, style  # shared 
 
 LENGTHS = (2**10, 2**12, 2**14, 2**16)
 CONFIGS = [("ssca", False), ("ssca", True), ("fam", False), ("fam", True)]
-LABELS = {"bpsk": "BPSK", "qpsk": "QPSK", "gmsk": "GMSK", "msk": "MSK"}
+LABELS = {"bpsk": "BPSK", "qpsk": "QPSK", "gmsk": "GMSK", "msk": "MSK", "srrc_bpsk": "SRRC BPSK"}
 
 
 def per_signal_auc(estimator, flattop, N, conjugate):
@@ -32,7 +32,7 @@ def per_signal_auc(estimator, flattop, N, conjugate):
 
 
 def figure():
-    fig, axes = plt.subplots(2, len(LENGTHS), figsize=(TEXT_WIDTH, 8.0 * CM), sharey=True)
+    fig, axes = plt.subplots(2, len(LENGTHS), figsize=(TEXT_WIDTH, 6.8 * CM), sharey=True)
     width = 0.2
     for row, conjugate in enumerate((False, True)):
         for column, N in enumerate(LENGTHS):
@@ -55,7 +55,7 @@ def figure():
     keys += [Patch(facecolor="white", edgecolor=ESTIMATORS[e][1], hatch="////", label=f"{ESTIMATORS[e][0]}, flattop")
              for e in ("ssca", "fam")]
     fig.legend(handles=keys, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.01))
-    fig.subplots_adjust(left=0.06, right=0.99, bottom=0.07, top=0.86, wspace=0.08, hspace=0.45)
+    fig.subplots_adjust(left=0.06, right=0.99, bottom=0.08, top=0.84, wspace=0.08, hspace=0.5)
     return fig
 
 
