@@ -375,20 +375,13 @@ def plot_roc_non_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_r
 
     roc_auc = np.zeros(len(snr))
     
-    threshold = np.linspace(0, 1, threshold_resolution)
-    threshold = threshold.reshape((1, -1))
     
     for i in range(len(snr)):
         signal_flag = True
-        true_positive_bpsk = np.zeros((1, threshold_resolution))
-        false_positive_bpsk = np.zeros((1, threshold_resolution))
-        
-        true_positive_qpsk = np.zeros((1, threshold_resolution))
-        false_positive_qpsk = np.zeros((1, threshold_resolution))
-        
-        true_positive_gmsk = np.zeros((1, threshold_resolution))
-        false_positive_gmsk = np.zeros((1, threshold_resolution))
-        
+        # Statistic of every trial, per signal: thresholds are set afterwards over its actual range,
+        # since the coherence can exceed 1 (e.g. with a PSD that does not match the numerator)
+        present, absent = ([], [], []), ([], [], [])
+
         for j in range(no_of_simulation*2):
             # Half signal + noise, half only noise
             bpsk_signal = create_rect_bpsk_signal(N, samples_per_symbol)
@@ -458,29 +451,18 @@ def plot_roc_non_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_r
             coh_max_qpsk = np.array(coh_max_qpsk).reshape((-1, 1))
             coh_max_gmsk = np.array(coh_max_gmsk).reshape((-1, 1))
 
-            # Check if magnitude pass threshold
-            cf_bpsk_detected = coh_max_bpsk >= threshold
-            cf_qpsk_detected = coh_max_qpsk >= threshold
-            cf_gmsk_detected = coh_max_gmsk >= threshold
-
-            if signal_flag:
-                true_positive_bpsk += cf_bpsk_detected.astype(int)
-                true_positive_qpsk += cf_qpsk_detected.astype(int)
-                true_positive_gmsk += cf_gmsk_detected.astype(int)
-            else:
-                false_positive_bpsk += cf_bpsk_detected.astype(int)
-                false_positive_qpsk += cf_qpsk_detected.astype(int)
-                false_positive_gmsk += cf_gmsk_detected.astype(int)
+            for store, value in zip(present if signal_flag else absent, (coh_max_bpsk, coh_max_qpsk, coh_max_gmsk)):
+                store.append(float(value[0, 0]))
 
         # len(coh_max) is only relevant if you want to check other alphas
-        average_pd_bpsk[i, :] = true_positive_bpsk/(no_of_simulation)
-        average_pf_bpsk[i, :] = false_positive_bpsk/(no_of_simulation)
-
-        average_pd_qpsk[i, :] = true_positive_qpsk/(no_of_simulation)
-        average_pf_qpsk[i, :] = false_positive_qpsk/(no_of_simulation)
-
-        average_pd_gmsk[i, :] = true_positive_gmsk/(no_of_simulation)
-        average_pf_gmsk[i, :] = false_positive_gmsk/(no_of_simulation)
+        top = max(1.0, max(max(v) for v in present + absent)) * (1 + 1e-9)
+        threshold = np.linspace(0, top, threshold_resolution).reshape((1, -1))
+        average_pd_bpsk[i, :] = np.mean(np.array(present[0])[:, None] >= threshold, axis=0)
+        average_pf_bpsk[i, :] = np.mean(np.array(absent[0])[:, None] >= threshold, axis=0)
+        average_pd_qpsk[i, :] = np.mean(np.array(present[1])[:, None] >= threshold, axis=0)
+        average_pf_qpsk[i, :] = np.mean(np.array(absent[1])[:, None] >= threshold, axis=0)
+        average_pd_gmsk[i, :] = np.mean(np.array(present[2])[:, None] >= threshold, axis=0)
+        average_pf_gmsk[i, :] = np.mean(np.array(absent[2])[:, None] >= threshold, axis=0)
         #roc_auc[i] = metrics.auc(average_pf[i, :], average_pd[i, :])
         #plt.plot(average_pf[i, :], average_pd[i, :], label=f"{snr[i]}dB SNR, AUC={np.round(roc_auc[i], 3)}")
         
@@ -561,20 +543,13 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
 
     roc_auc = np.zeros(len(snr))
     
-    threshold = np.linspace(0, 1, threshold_resolution)
-    threshold = threshold.reshape((1, -1))
     
     for i in range(len(snr)):
         signal_flag = True
-        true_positive_bpsk = np.zeros((1, threshold_resolution))
-        false_positive_bpsk = np.zeros((1, threshold_resolution))
-        
-        true_positive_msk = np.zeros((1, threshold_resolution))
-        false_positive_msk = np.zeros((1, threshold_resolution))
-        
-        true_positive_srrc_bpsk = np.zeros((1, threshold_resolution))
-        false_positive_srrc_bpsk = np.zeros((1, threshold_resolution))
-        
+        # Statistic of every trial, per signal: thresholds are set afterwards over its actual range,
+        # since the coherence can exceed 1 (e.g. with a PSD that does not match the numerator)
+        present, absent = ([], [], []), ([], [], [])
+
         for j in range(no_of_simulation*2):
             # Half signal + noise, half only noise
             bpsk_signal = create_rect_bpsk_signal(N, samples_per_symbol)
@@ -644,29 +619,18 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
             coh_max_msk = np.array(coh_max_msk).reshape((-1, 1))
             coh_max_srrc_bpsk = np.array(coh_max_srrc_bpsk).reshape((-1, 1))
 
-            # Check if magnitude pass threshold
-            cf_bpsk_detected = coh_max_bpsk >= threshold
-            cf_msk_detected = coh_max_msk >= threshold
-            cf_srrc_bpsk_detected = coh_max_srrc_bpsk >= threshold
-
-            if signal_flag:
-                true_positive_bpsk += cf_bpsk_detected.astype(int)
-                true_positive_msk += cf_msk_detected.astype(int)
-                true_positive_srrc_bpsk += cf_srrc_bpsk_detected.astype(int)
-            else:
-                false_positive_bpsk += cf_bpsk_detected.astype(int)
-                false_positive_msk += cf_msk_detected.astype(int)
-                false_positive_srrc_bpsk += cf_srrc_bpsk_detected.astype(int)
+            for store, value in zip(present if signal_flag else absent, (coh_max_bpsk, coh_max_msk, coh_max_srrc_bpsk)):
+                store.append(float(value[0, 0]))
 
         # len(coh_max) is only relevant if you want to check other alphas
-        average_pd_bpsk[i, :] = true_positive_bpsk/(no_of_simulation)
-        average_pf_bpsk[i, :] = false_positive_bpsk/(no_of_simulation)
-
-        average_pd_msk[i, :] = true_positive_msk/(no_of_simulation)
-        average_pf_msk[i, :] = false_positive_msk/(no_of_simulation)
-
-        average_pd_srrc_bpsk[i, :] = true_positive_srrc_bpsk/(no_of_simulation)
-        average_pf_srrc_bpsk[i, :] = false_positive_srrc_bpsk/(no_of_simulation)
+        top = max(1.0, max(max(v) for v in present + absent)) * (1 + 1e-9)
+        threshold = np.linspace(0, top, threshold_resolution).reshape((1, -1))
+        average_pd_bpsk[i, :] = np.mean(np.array(present[0])[:, None] >= threshold, axis=0)
+        average_pf_bpsk[i, :] = np.mean(np.array(absent[0])[:, None] >= threshold, axis=0)
+        average_pd_msk[i, :] = np.mean(np.array(present[1])[:, None] >= threshold, axis=0)
+        average_pf_msk[i, :] = np.mean(np.array(absent[1])[:, None] >= threshold, axis=0)
+        average_pd_srrc_bpsk[i, :] = np.mean(np.array(present[2])[:, None] >= threshold, axis=0)
+        average_pf_srrc_bpsk[i, :] = np.mean(np.array(absent[2])[:, None] >= threshold, axis=0)
         #roc_auc[i] = metrics.auc(average_pf[i, :], average_pd[i, :])
         #plt.plot(average_pf[i, :], average_pd[i, :], label=f"{snr[i]}dB SNR, AUC={np.round(roc_auc[i], 3)}")
         
