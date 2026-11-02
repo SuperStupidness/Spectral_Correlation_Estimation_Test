@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from .core.filter_design import gaussian_design
 from .visualization.time_domain import plot_fsk_signal
 
-def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT=0.3, gauss_filter_span=4, plot=False, normalize=False, rng=np.random.default_rng()):
+def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT=0.3, gauss_filter_span=4, plot=False, rng=np.random.default_rng()):
     """
     Generates a GMSK (Gaussian Minimum Shift Keying) modulated signal.
 
@@ -25,8 +25,6 @@ def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT
     rng : numpy.random.Generator, optional
         Random number generator instance (default: np.random.default_rng()).
         Used to generate the random bit sequence.
-    normalize : bool, optional
-        Passed to gaussian_design; has no effect on the output, since the filter is rescaled to unit gain.
     
 
     Returns:
@@ -52,10 +50,9 @@ def create_gmsk_signal(number_of_symbols, samples_per_symbol, f_carrier=0.05, BT
     MSK_symbol = 2*bit_seq - 1
     MSK_symbol_upsampled = np.zeros(n)
     MSK_symbol_upsampled[::samples_per_symbol] = MSK_symbol
-    # Unit gain, so that each symbol turns the phase by h/2 = 1/4 cycle as in MSK: the taps must sum to the
-    # number of samples per symbol (the designed filter sums to about 1.1 times that, i.e. h = 0.55)
-    gaussian_filter = gaussian_design(BT, samples_per_symbol, gauss_filter_span, normalize=normalize)
-    gaussian_filter = gaussian_filter * samples_per_symbol / np.sum(gaussian_filter)
+    # GSM frequency pulse with unit area (normalize=True), scaled by the samples per symbol so that each symbol
+    # turns the phase by pi h = pi/2 (a quarter cycle), as in MSK
+    gaussian_filter = gaussian_design(BT, samples_per_symbol, gauss_filter_span, normalize=True) * samples_per_symbol
     MSK_symbol_gauss = scipy.signal.oaconvolve(MSK_symbol_upsampled, gaussian_filter, mode="same")
     
     delta_f = 1/(2*samples_per_symbol) * modulation_index

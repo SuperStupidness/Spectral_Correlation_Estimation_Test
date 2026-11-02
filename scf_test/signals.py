@@ -112,16 +112,16 @@ SIGNALS = {
     # Constant-envelope (the generators place the carrier themselves)
     "msk": TestSignal("MSK", lambda n, r: create_cpfsk_signal(n, S, modulation_index=0.5, f_carrier=CFO, rng=r)[0],
                       _keep(np.arange(1, 10) * F_SYM, False),
-                      _keep(2 * CFO + (2 * np.arange(-10, 10) + 1) * F_SYM / 2, True),
+                      _keep(2 * CFO + (2 * np.arange(-11, 11) + 1) * F_SYM / 2, True),
                       round(F_SYM, 6), round(2 * CFO + 3 * F_SYM / 2, 6)),
     "gmsk": TestSignal("GMSK", lambda n, r: create_gmsk_signal(n, S, f_carrier=CFO, BT=0.3, gauss_filter_span=SPAN,
                                                                rng=r)[0],
                        (round(F_SYM, 6),), _keep([2 * CFO - F_SYM / 2, 2 * CFO + F_SYM / 2], True),
                        round(F_SYM, 6), round(2 * CFO + F_SYM / 2, 6)),
     "fsk2": TestSignal("Incoherent 2FSK", lambda n, r: create_incoherent_fsk_signal(n, S, 2, FSK_DF, CFO, rng=r)[0],
-                       _keep(np.concatenate([np.arange(-10, 11) * F_SYM + d for d in (0, 2 * FSK_DF, -2 * FSK_DF)]),
+                       _keep(np.concatenate([np.arange(-11, 12) * F_SYM + d for d in (0, 2 * FSK_DF, -2 * FSK_DF)]),
                              False),
-                       _keep(np.concatenate([2 * CFO + np.arange(-10, 11) * F_SYM + d
+                       _keep(np.concatenate([2 * CFO + np.arange(-11, 12) * F_SYM + d
                                              for d in (0, 2 * FSK_DF, -2 * FSK_DF)]), True),
                        round(F_SYM, 6), round(2 * CFO + F_SYM, 6)),
 }
