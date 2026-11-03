@@ -47,7 +47,7 @@ def roc_figure():
              ("ssca_flattop", "SSCA flattop", "green", "^"), ("fastsc", "FastSC", "brown", "."),
              ("2dfft", "2D-FFT", "pink", "*"), ("2dfft_flattop", "2D-FFT flattop", "purple", "+")]
 
-    fig, axes = plt.subplots(1, 2, figsize=FIG6_SIZE)
+    fig, axes = plt.subplots(1, 2, figsize=FIG6_SIZE, sharey=True)  # one AUC scale, so the panels compare directly
     for ax, scd in zip(axes, ("non-conjugate", "conjugate")):
         for estimator, label, color, marker in lines:
             if scd == "conjugate" and estimator == "fastsc":
@@ -62,7 +62,7 @@ def roc_figure():
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=4, fontsize=SMALL, bbox_to_anchor=(0.5, 1.0), frameon=False,
                columnspacing=0.9, handletextpad=0.3, handlelength=1.8, borderaxespad=0.1)
-    fig.subplots_adjust(left=0.11, right=0.955, bottom=0.17, top=0.79, wspace=0.24)
+    fig.subplots_adjust(left=0.11, right=0.955, bottom=0.17, top=0.79, wspace=0.14)
     return fig
 
 
@@ -182,8 +182,8 @@ def pareto_figure():
 
 
 if __name__ == "__main__":
-    roc_figure().savefig(ROOT / "fig" / "roc_compare_subplot_rev_2.png", dpi=300)
-    print("fig/roc_compare_subplot_rev_2.png written")
+    roc_figure().savefig(ROOT / "fig" / "roc_compare_subplot_rev_3.png", dpi=300)
+    print("fig/roc_compare_subplot_rev_3.png written")
     if "--roc-only" not in sys.argv:
         pareto_figure().savefig(ROOT / "fig" / "pareto_front_rev.png", dpi=300)
         print("fig/pareto_front_rev.png written")

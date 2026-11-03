@@ -4,7 +4,13 @@
         --benchmark-warmup=on --benchmark-min-rounds=10 --benchmark-json=data/revision/pareto_benchmark.json
 
 Same signal length (N = 4096) and settings as the robustness test. Run it on an otherwise idle machine.
+For the Pareto fronts at other lengths (README), set PARETO_N and write to pareto_benchmark_N<N>.json:
+
+    PARETO_N=16384 python -m pytest experiments/pareto_benchmark.py ... --benchmark-json=data/revision/pareto_benchmark_N16384.json
+
+The 2D-FFT is skipped above N = 4096 (O(N^2) memory) and the Fast-SC above Np = 64 there, as in revision_runs.py.
 """
+import os
 import sys
 from functools import partial
 from pathlib import Path
@@ -16,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scf_test.algorithm import (ssca, ssca_flattop, fam, fam_flattop, fast_sc_wrapper, scf_2d_fft_wrapper,
                                 scf_2d_fft_flattop)
 
-N = 4096
+N = int(os.environ.get("PARETO_N", 4096))
 NPS = [8, 16, 32, 64, 128, 256]
 CONFIGURATIONS = {
     "ssca": lambda Np: partial(ssca, Np=Np),
@@ -38,5 +44,7 @@ def signal():
 @pytest.mark.parametrize("Np", NPS)
 @pytest.mark.parametrize("configuration", list(CONFIGURATIONS))
 def test_time(benchmark, signal, configuration, Np):
-    benchmark.extra_info.update(configuration=configuration, Np=Np)
+    if N > 4096 and (configuration.startswith("2dfft") or (configuration == "fastsc" and Np > 64)):
+        pytest.skip("not run at this signal length (see revision_runs.py --pareto-n)")
+    benchmark.extra_info.update(configuration=configuration, Np=Np, N=N)
     benchmark(CONFIGURATIONS[configuration](Np), signal)
