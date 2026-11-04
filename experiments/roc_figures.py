@@ -66,11 +66,11 @@ def roc_figure():
     return fig
 
 
-def pareto_score(estimator, Np):
+def pareto_score(estimator, Np, N=4096):
     """Non-conjugate mean AUC over the three signals and the three SNRs, from the revision runs."""
     values = []
     for snr in SNR:
-        path = ROOT / "data" / "revision" / "roc" / f"roc_{estimator}_Np{Np}_N4096_snr{snr}_nc.npz"
+        path = ROOT / "data" / "revision" / "roc" / f"roc_{estimator}_Np{Np}_N{N}_snr{snr}_nc.npz"
         statistic = np.load(path)["statistic"]  # missing until revision_runs.py has finished them
         second = path.with_name(path.stem + "_b2.npz")  # second batch of trials (--second-batch), pooled
         if second.exists():
@@ -94,9 +94,10 @@ def find_pareto_front(auc_values, times, tolerance=0.05):
     return ~dominated.any(axis=1)
 
 
-def benchmark_minima():
+def benchmark_minima(N=4096):
     """Minimum execution time per (configuration, Np), from experiments/pareto_benchmark.py."""
-    with open(ROOT / "data" / "revision" / "pareto_benchmark.json") as file:
+    name = "pareto_benchmark.json" if N == 4096 else f"pareto_benchmark_N{N}.json"
+    with open(ROOT / "data" / "revision" / name) as file:
         runs = json.load(file)["benchmarks"]
     return {(run["extra_info"]["configuration"], run["extra_info"]["Np"]): run["stats"]["min"] for run in runs}
 

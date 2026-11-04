@@ -685,6 +685,11 @@ def plot_roc_conjugate(func_lambda, Np=8, no_of_simulation=1000, threshold_resol
     
     return average_pd, average_pf, roc_auc, threshold_resolution
 
+# Windows compared by extended_window_test and window_resolution_test, in the same order
+WINDOW_LIST = ["boxcar", "triang", ("kaiser", 4), "hamming", "hann", "cosine", "barthann", "lanczos", ("tukey", 0.2),
+               ("chebwin", 100), ("kaiser", 14), "blackmanharris", "nuttall", "flattop", "parzen", "bohman", "taylor"]
+
+
 def extended_window_test(scf_func, name="algorithm_window_test", signal_length=4096, Np=64, L=16, fam=False, conjugate=False, snr=0, number_of_runs=100, plot=False):
     number_of_symbols = int(signal_length/8)
     samples_per_symbol = 10 # Symbol rate = 0.1 Hz
@@ -698,7 +703,7 @@ def extended_window_test(scf_func, name="algorithm_window_test", signal_length=4
     # small_bandwidth_window = ["boxcar", "triang", ("kaiser", 4), "hamming", "hann", "cosine", "barthann", "lanczos", ("tukey", 0.2)]
     # large_attenuation_window = [("chebwin", 100), ("kaiser", 14), "blackmanharris", "nuttall", "flattop", "parzen", "bohman", "taylor", "hamming", "hann", "cosine", "barthann", "lanczos"]
 
-    all_windows = ["boxcar", "triang", ("kaiser", 4), "hamming", "hann", "cosine", "barthann", "lanczos", ("tukey", 0.2), ("chebwin", 100), ("kaiser", 14), "blackmanharris", "nuttall", "flattop", "parzen", "bohman", "taylor"]
+    all_windows = WINDOW_LIST
 
     no_of_windows = len(all_windows)
 
@@ -1153,6 +1158,7 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
             ("Memory Test", lambda: memory_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("Speed Test (Benchmark)", lambda: run_benchmark_timeit(func_lambda, Np, L, fam=fam)),
             ("Cycle Leakage", lambda: window_test(func_lambda, name=name, Np=Np, L=L, snr=np.arange(-10, 0), fam=fam)),
+            ("Resolution Test", lambda: resolution_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("ROC Plot (Non Conjugate)", lambda: plot_roc_non_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10])),
             ("ROC Plot (Conjugate)", lambda: plot_roc_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10])),
         ]
@@ -1166,6 +1172,7 @@ def run_all_tests(func_lambda, name="algorithm", Np=64, L=16, N_roc=4096,
             ("Memory Test", lambda: memory_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("Speed Test (Benchmark)", lambda: run_benchmark_timeit(func_lambda, Np, L, fam=fam)),
             ("Cycle Leakage", lambda: window_test(func_lambda, name=name, Np=Np, L=L, snr=np.arange(-10, 0), fam=fam)),
+            ("Resolution Test", lambda: resolution_test(func_lambda, name=name, Np=Np, L=L, fam=fam)),
             ("ROC Plot (Non Conjugate)", lambda: plot_roc_non_conjugate(func_lambda, Np=Np, L=L, fam=fam, name=name, N=N_roc, no_of_simulation=500, snr=[0, -5, -10])),
         ]
     else:
@@ -1857,4 +1864,296 @@ def signal_robustness_test(func_lambda, signals=None, Np=64, L=16, N=4096, snr=(
         plt.show()
 
     return auc, statistics
+
+
+# Dip between two equal peaks (relative to the higher one) at which they count as resolved; Harris uses the
+# 6 dB width of a single peak instead (None)
+CRITERION_NAMES = {"half": "half-amplitude dip", "harris": "Harris 6 dB", "rayleigh": "Rayleigh", "sparrow": "Sparrow"}
+RESOLUTION_CRITERIA = {"half": 0.5, "harris": None, "rayleigh": 8 / np.pi**2, "sparrow": 0.99}
+
+
+def _resolution_profile(func_lambda, axis, separation, Np, L, N, fam, shifts, phases=(0.0,)):
+    """Response to two equal features `separation` bins apart, or to one feature if `separation` is None.
+
+    axis "f": two tones on the alpha = 0 slice, bins of 1/Np. axis "alpha": three tones f_a, f_a + alpha_1 and
+    f_a + alpha_2, whose features at alpha_1 and alpha_2 sit at the same f to within half a bin, bins of 1/N
+    (two tone pairs would put a cross-term feature midway between them). `phases` are phases of the second
+    feature relative to the first: the estimate is quadratic in the signal, so S(phase) = C0 + C1 e^{j phase}
+    + C-1 e^{-j phase} exactly, and three estimates give every phase. The input is moved across one bin in
+    `shifts` steps and the outputs interleaved, so the response is seen on a grid finer than the estimator's.
+    Returns (offset from the centre in bins, response per phase normalized to its largest value).
+    """
+    n = np.arange(N)
+    bin_width = 1 / Np if axis == "f" else 1 / N
+    centre = 0.2                                     # f of the alpha = 0 peaks, or alpha of the cycle features
+    f_a = 0.1                                        # first tone of the cycle frequency test: features at f ~ 0.2
+    half = 0 if separation is None else separation / 2
+    window = max(8, 2 * half + 6)                    # bins either side of the centre kept in the profile
+    phases = np.atleast_1d(phases)
+    base = 2 * np.pi * np.arange(3) / 3              # the three estimates the other phases are built from
+
+    def estimate(x):
+        S, f, alpha = func_lambda(x, Np=Np, L=L, conjugate=False) if fam else func_lambda(x, Np=Np, conjugate=False)
+        return np.asarray(S).ravel(), np.asarray(f).ravel(), np.asarray(alpha).ravel()
+
+    offsets, values = [], []
+    for step in range(shifts):
+        d = step / shifts * bin_width
+        positions = [centre + d] if separation is None else [centre + d - half * bin_width,
+                                                             centre + d + half * bin_width]
+        tones = [np.exp(2j * np.pi * (p if axis == "f" else f_a + p) * n) for p in positions]
+        fixed = tones[0] + (0 if axis == "f" else np.exp(2j * np.pi * f_a * n))
+        if separation is None:
+            S, f, alpha = estimate(fixed)
+            stacked = None
+        else:
+            estimates = [estimate(fixed + np.exp(1j * b) * tones[1]) for b in base]
+            f, alpha = estimates[0][1], estimates[0][2]
+        if axis == "f":
+            keep = (np.abs(alpha) < 0.5 / N) & (np.abs(f - centre - d) < window * bin_width)
+        else:
+            keep = (np.abs(alpha - centre - d) < window * bin_width) & (np.abs(f - f_a - centre / 2) < 2 / Np)
+        if separation is None:
+            S = np.abs(S[keep])[None, :]
+        else:
+            # Fourier coefficients over the three base phases, then the response at each requested phase
+            stacked = np.array([e[0][keep] for e in estimates])
+            C = {m: np.mean(stacked * np.exp(-1j * m * base)[:, None], axis=0) for m in (-1, 0, 1)}
+            S = np.abs(C[0] + np.exp(1j * phases)[:, None] * C[1] + np.exp(-1j * phases)[:, None] * C[-1])
+        if axis == "f":
+            position, value = f[keep], S
+        else:
+            position, inverse = np.unique(np.round(alpha[keep], 12), return_inverse=True)
+            value = np.zeros((len(S), len(position)))
+            for row, s in zip(value, S):
+                np.maximum.at(row, inverse, s)           # cyclic domain profile: max over f
+        offsets.append((position - centre - d) / bin_width)
+        values.append(value)
+    offsets, values = np.concatenate(offsets), np.concatenate(values, axis=1)
+    grid, inverse = np.unique(np.round(offsets, 6), return_inverse=True)
+    profiles = np.array([np.bincount(inverse, weights=v) for v in values]) / np.bincount(inverse)
+    return grid, profiles / profiles.max(axis=1, keepdims=True)
+
+
+def _dip(grid, profile):
+    """Response midway between the two features, relative to the highest point."""
+    return np.interp(0, grid, profile) / profile.max()
+
+
+def _peak_width(grid, profile, level=0.5):
+    """Width of the main peak at `level` of its height, with the edges interpolated."""
+    top = np.argmax(profile)
+    left = top
+    while left > 0 and profile[left - 1] >= level:
+        left -= 1
+    right = top
+    while right < len(profile) - 1 and profile[right + 1] >= level:
+        right += 1
+    lo = grid[left] if left == 0 else np.interp(level, [profile[left - 1], profile[left]], [grid[left - 1], grid[left]])
+    hi = grid[right] if right == len(grid) - 1 else np.interp(level, [profile[right + 1], profile[right]],
+                                                              [grid[right + 1], grid[right]])
+    return hi - lo
+
+
+def resolution_test(func_lambda, name="algorithm", Np=64, L=16, N=4096, criterion="half", fam=False, shifts=4,
+                    phases=36, step=0.5, max_separation=32, plot=True):
+    """Effective frequency and cycle frequency resolution of an estimator, from noise-free tones.
+
+    Criteria (`criterion`):
+      "half"     - the dip between two equal peaks falls to half the peak (6 dB in amplitude): clearly
+                   separated peaks, as in the original resolution figure (Fig. 9). The default.
+      "harris"   - the 6 dB width of a single peak (Harris, Proc. IEEE 1978): two equal tones further apart than
+                   this are resolvable. |S| is taken as an amplitude, so 6 dB down is half the peak.
+      "rayleigh" - two equal peaks are resolved once the dip between them falls to 8/pi^2 ~ 0.81 of the peak
+                   (the dip of two sinc^2 peaks, each on the other's first null).
+      "sparrow"  - the dip just appears (falls below 0.99 of the peak): the closest the peaks can be and still
+                   be told apart.
+    For "rayleigh" and "sparrow" the separation is increased in `step` bins until the dip first crosses the
+    threshold, then refined by bisection. Two features add coherently, so the dip depends on their relative
+    phase (at some phases they cancel midway even when far closer than the peak width): the dip is taken at
+    `phases` relative phases and the shallowest one counts, i.e. the peaks must be resolved at every phase.
+    The phases cost nothing extra (three estimates per shift give all of them), so the cost is about
+    3 * shifts estimator calls per separation tried, and 2 * shifts for "harris" without the plot.
+
+    Frequency: two tones on the alpha = 0 slice, in bins of 1/Np. Cycle frequency: two cycle features at the
+    same f (see _resolution_profile), in bins of 1/N. fs = 1.
+
+    Returns
+    -------
+    results : dict
+        "frequency" and "cycle_frequency", each with "bins" (in bins of 1/Np or 1/N) and "value" (in Hz),
+        plus "criterion".
+    """
+    if criterion not in RESOLUTION_CRITERIA:
+        raise ValueError(f"criterion must be one of {list(RESOLUTION_CRITERIA)}")
+    threshold = RESOLUTION_CRITERIA[criterion]
+
+    phase_grid = 2 * np.pi * np.arange(phases) / phases
+
+    def profile(axis, separation, phase=0.0):
+        grid, profiles = _resolution_profile(func_lambda, axis, separation, Np, L, N, fam, shifts, phase)
+        return grid, profiles[0]
+
+    def worst(axis, separation):
+        """(dip, phase) of the relative phase with the shallowest dip."""
+        grid, profiles = _resolution_profile(func_lambda, axis, separation, Np, L, N, fam, shifts, phase_grid)
+        dips = [_dip(grid, p) for p in profiles]
+        return dips[int(np.argmax(dips))], phase_grid[int(np.argmax(dips))]
+
+    results = {"criterion": criterion}
+    worst_phase = {}
+    for axis, key, bin_width in (("f", "frequency", 1 / Np), ("alpha", "cycle_frequency", 1 / N)):
+        if threshold is None:
+            separation, worst_phase[key] = _peak_width(*profile(axis, None)), None
+        else:
+            low, high = 0.0, step
+            while worst(axis, high)[0] > threshold:
+                low, high = high, high + step
+                if high > max_separation:
+                    raise RuntimeError(f"{name}: {key} peaks not resolved by {max_separation} bins")
+            for _ in range(5):
+                middle = (low + high) / 2
+                low, high = (middle, high) if worst(axis, middle)[0] > threshold else (low, middle)
+            separation = high
+            worst_phase[key] = worst(axis, separation)[1]
+        results[key] = {"bins": separation, "value": separation * bin_width}
+
+    unit = {"frequency": "1/Np", "cycle_frequency": "1/N"}
+    print(f"{name} ({criterion}, N = {N}, Np = {Np}):")
+    for key in ("frequency", "cycle_frequency"):
+        print(f"  {key.replace('_', ' ')} resolution: {results[key]['bins']:.2f} bins of {unit[key]}"
+              f" = {results[key]['value']:.3g} Hz")
+
+    if plot:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+        for ax, (axis, key, symbol, unit_text) in zip(axes, (("f", "frequency", "f", "1/N_p"),
+                                                             ("alpha", "cycle_frequency", "\\alpha", "1/N"))):
+            separation = results[key]["bins"]
+            # Drawn at the relative phase with the shallowest dip (the worst case, as in Harris's argument)
+            phase = worst_phase[key] if worst_phase[key] is not None else worst(axis, separation)[1]
+            grid, response = profile(axis, separation, phase)
+            ax.plot(grid, response, color="tab:blue", label="Two peaks at the limit")
+            if threshold is None:
+                single_grid, single = profile(axis, None)
+                ax.plot(single_grid, single, color="0.6", linestyle="--", linewidth=0.9, label="Single peak")
+                ax.axhline(0.5, color="tab:orange", linestyle=":", linewidth=0.9, label="6 dB (half amplitude)")
+            else:
+                ax.axhline(threshold, color="tab:orange", linestyle=":", linewidth=0.9,
+                           label=f"Dip = {threshold:.2f}")
+            for position in (-separation / 2, separation / 2):
+                ax.axvline(position, color="tab:green", linewidth=0.6, alpha=0.6)
+            ax.set_xlim(-separation / 2 - 6, separation / 2 + 6)
+            ax.set_ylim(0, 1.05)
+            ax.set_xlabel(f"${symbol}$ offset (bins of ${unit_text}$)")
+            ax.set_title(f"{key.replace('_', ' ').capitalize()}: $\\Delta {symbol}$ = {separation:.2f} bins")
+            ax.legend(fontsize=8, loc="lower right")
+        axes[0].set_ylabel("Normalized |S|")
+        fig.suptitle(f"{name} resolution ({CRITERION_NAMES[criterion]})")
+        fig.tight_layout()
+        plt.show()
+
+    return results
+
+
+def _window_label(window):
+    return window if isinstance(window, str) else f"{window[0]}({window[1]})"
+
+
+def window_width(window, level_db=6.02, M=512, pad=256):
+    """Main-lobe width of a window's amplitude spectrum `level_db` below its peak, in bins of 1/M (Harris's
+    6 dB bandwidth by default; 3.01 for the 3 dB bandwidth)."""
+    W = np.abs(np.fft.fftshift(np.fft.fft(get_window(window, M), M * pad)))
+    W = W / W.max()
+    centre, level = len(W) // 2, 10 ** (-level_db / 20)
+    right = np.argmax(W[centre:] < level)
+    left = np.argmax(W[centre::-1] < level)
+    return (left + right) / pad
+
+
+def window_resolution_test(scf_func, name="algorithm", windows=None, Np=64, L=16, N=4096, criterion="half",
+                           fam=False, leakage=None, plot=True):
+    """Frequency and cycle frequency resolution (resolution_test) for each window of an estimator with two windows.
+
+    The estimator takes window_1 (the Np-point channelizer window, which sets the frequency resolution) and
+    window_2 (the long window across the data, which sets the cycle frequency resolution), as ssca_flattop and
+    fam_flattop do. Each window is tested in one position with the other a boxcar: the frequency resolution
+    with window_1 = window, the cycle frequency resolution with window_2 = window. The theoretical 6 dB and 3 dB
+    main-lobe widths are returned alongside; with criterion="harris" the SSCA's resolution equals the 6 dB width,
+    and the FAM's frequency resolution the 3 dB width (its alpha = 0 output is the window squared). The default
+    "half" criterion asks for a clear dip, so it sits above them; "harris" is the fastest (no search).
+
+    `leakage`, the matrix returned by extended_window_test for the same estimator (rows window_1, columns
+    window_2, in WINDOW_LIST order), adds a trade-off plot of cycle leakage against resolution for every pair.
+
+    Returns
+    -------
+    results : pandas.DataFrame
+        One row per window: frequency and cycle_frequency resolution (bins of 1/Np and 1/N), width_6db and
+        width_3db (bins).
+    pairs : pandas.DataFrame or None
+        With `leakage`: one row per (window_1, window_2) pair with both resolutions and the cycle leakage.
+    """
+    import contextlib
+    import io
+    from functools import partial
+
+    windows = WINDOW_LIST if windows is None else windows
+    rows = []
+    for window in windows:
+        resolution = {}
+        for key, which, other in (("frequency", "window_1", "window_2"), ("cycle_frequency", "window_2", "window_1")):
+            estimator = partial(scf_func, **{which: window, other: "boxcar"})
+            with contextlib.redirect_stdout(io.StringIO()):   # one table at the end instead of a line per run
+                result = resolution_test(estimator, name=name, Np=Np, L=L, N=N, criterion=criterion, fam=fam,
+                                         plot=False)
+            resolution[key] = result[key]["bins"]
+        rows.append({"window": _window_label(window), **resolution,
+                     "width_6db": window_width(window, 6.02), "width_3db": window_width(window, 3.01)})
+    results = pd.DataFrame(rows).set_index("window")
+
+    pairs = None
+    if leakage is not None:
+        leakage = np.asarray(leakage)
+        if leakage.shape != (len(windows), len(windows)):
+            raise ValueError("leakage must be the extended_window_test matrix for the same windows")
+        labels = list(results.index)
+        pairs = pd.DataFrame([{"window_1": a, "window_2": g, "frequency": results.loc[a, "frequency"],
+                               "cycle_frequency": results.loc[g, "cycle_frequency"], "leakage": leakage[i, j]}
+                              for i, a in enumerate(labels) for j, g in enumerate(labels)])
+
+    print(results.round(2).to_string())
+
+    if plot:
+        panels = 3 if pairs is not None else 2
+        fig, axes = plt.subplots(1, panels, figsize=(5 * panels, 4.2))
+        x = np.arange(len(results))
+        for ax, key, title, unit in ((axes[0], "frequency", "Frequency (window_1)", "1/N_p"),
+                                     (axes[1], "cycle_frequency", "Cycle frequency (window_2)", "1/N")):
+            ax.plot(x, results["width_6db"], linestyle="none", marker="_", markersize=14, color="0.45",
+                    label="6 dB width (theory)")
+            ax.plot(x, results["width_3db"], linestyle="none", marker="_", markersize=14, color="0.75",
+                    label="3 dB width (theory)")
+            ax.plot(x, results[key], linestyle="none", marker="o", markersize=5, color="tab:blue", label="Measured")
+            ax.set_xticks(x, results.index, rotation=70, ha="right", fontsize=8)
+            ax.set_ylabel(f"Resolution (bins of ${unit}$)")
+            ax.set_title(title, fontsize=10)
+            ax.grid(axis="y", alpha=0.3)
+        axes[0].legend(fontsize=8)
+        if pairs is not None:
+            ax = axes[2]
+            points = ax.scatter(pairs["cycle_frequency"], pairs["leakage"], c=pairs["frequency"], cmap="viridis",
+                                s=18)
+            best = pairs.loc[pairs["leakage"].idxmin()]
+            ax.annotate(f"{best['window_1']} / {best['window_2']}", (best["cycle_frequency"], best["leakage"]),
+                        xytext=(6, 6), textcoords="offset points", fontsize=8)
+            ax.set_yscale("log")
+            ax.set_xlabel("Cycle frequency resolution (bins of $1/N$)")
+            ax.set_ylabel("Average cycle leakage")
+            ax.set_title("Leakage vs resolution, every window pair", fontsize=10)
+            fig.colorbar(points, ax=ax, label="Frequency resolution (bins of $1/N_p$)")
+        fig.suptitle(f"{name} window resolution test ({CRITERION_NAMES[criterion]}, N = {N}, Np = {Np})")
+        fig.tight_layout()
+        plt.show()
+
+    return results, pairs
 

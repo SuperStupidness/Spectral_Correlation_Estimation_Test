@@ -8,7 +8,7 @@ can all be worked out afterwards without re-running anything.
     python experiments/revision_runs.py --slow     # also the Fast-SC and 2D-FFT ROC runs
     python experiments/revision_runs.py --extra    # also other signal types, the window test
                                                    # and high-SNR leakage
-    python experiments/revision_runs.py --pareto-n # only the Pareto front runs at N = 1024 and 16384
+    python experiments/revision_runs.py --pareto-n # only the Pareto front runs at N = 1024, 8192 and 16384
     python experiments/revision_runs.py --list     # show the jobs and exit
     python experiments/revision_runs.py --smoke    # tiny end-to-end check
 
@@ -302,19 +302,21 @@ def build_jobs(smoke=False, slow=False, extra=False, second_batch=False, pareto_
         jobs.append(dict(kind=kind, name=name, est=est, Np=Np, N=N, snr=snr, conj=conj, trials=trials, **settings))
 
     # The Pareto front (Fig. 7) at other signal lengths, for the README: every configuration over Np, non-conjugate
-    # only, one batch of 500 trials. The 2D-FFT needs O(N^2) memory, so it is left out at N = 16384, and the Fast-SC
-    # stops at Np = 64 there (hours per job, growing with Np^2 N). Longest first; finished jobs are skipped.
+    # only, two batches of 500 trials (the second "_b2", pooled like Fig. 7's). The 2D-FFT needs O(N^2) memory and
+    # time, so it is left out above N = 4096, and the Fast-SC stops at Np = 64 there (hours per job, growing with
+    # Np^2 N). Longest first; finished jobs are skipped.
     if pareto_n:
-        for N in (16384, 1024):
+        for N in (16384, 8192, 1024):
             for Np in (256, 128, 64, 32, 16, 8):
                 for snr in SNRS:
-                    for est in SSCA_FAM:
-                        add("roc", est, Np, N, False, 500, snr=snr)
-                    if N <= 4096 or Np <= 64:
-                        add("roc", "fastsc", Np, N, False, 500, snr=snr)
-                    if N <= 4096:
-                        add("roc", "2dfft", Np, N, False, 500, snr=snr)
-                        add("roc", "2dfft_flattop", Np, N, False, 500, snr=snr)
+                    for tag in (None, "b2"):
+                        for est in SSCA_FAM:
+                            add("roc", est, Np, N, False, 500, snr=snr, tag=tag)
+                        if N <= 4096 or Np <= 64:
+                            add("roc", "fastsc", Np, N, False, 500, snr=snr, tag=tag)
+                        if N <= 4096:
+                            add("roc", "2dfft", Np, N, False, 500, snr=snr, tag=tag)
+                            add("roc", "2dfft_flattop", Np, N, False, 500, snr=snr, tag=tag)
         return jobs
 
     if smoke:
@@ -462,7 +464,7 @@ def main():
     parser.add_argument("--second-batch", action="store_true",
                         help="500 more robustness trials for Figs. 6 and 7 (pooled to 1000)")
     parser.add_argument("--pareto-n", action="store_true",
-                        help="only the robustness runs for the Pareto front at N = 1024 and 16384 (README)")
+                        help="only the robustness runs for the Pareto front at N = 1024, 8192 and 16384 (README)")
     parser.add_argument("--log", default="log.txt", help="log file name inside the output directory")
     parser.add_argument("--match", default="", help="only run jobs whose name contains this text")
     parser.add_argument("--name", help="only run the job with exactly this name")

@@ -45,6 +45,11 @@ SSCA with flattop and boxcar window is best for general use. It has a good combi
 
 ## Updates
 
+04/11/2026
+
+- Add Pareto fronts at N = 1024, 4096, 8192 and 16384 to the gallery.
+- Add resolution test and window resolution test to the gallery.
+
 15/08/2026
 
 - README Update. Add references.
@@ -91,6 +96,13 @@ https://doi.org/10.1016/j.ymssp.2017.01.011.
 
 ![Performance Test](/fig/ssca_roc_test.png)
 
+*Pareto Front at Different Signal Lengths*
+
+![Pareto Front N = 1024](/fig/pareto_front_N1024.png)
+![Pareto Front N = 4096](/fig/pareto_front_N4096.png)
+![Pareto Front N = 8192](/fig/pareto_front_N8192.png)
+![Pareto Front N = 16384](/fig/pareto_front_N16384.png)
+
 *Coherence Validation*
 
 ![SSCA Coherence Validation](/fig/ssca_coh_validation_1024.png)
@@ -105,6 +117,14 @@ https://doi.org/10.1016/j.ymssp.2017.01.011.
 *Window Test (Extended Cycle Leakage Test)*
 
 ![SSCA Window Test](/fig/ssca_window_test.png)
+
+*Resolution Test*
+
+![SSCA Resolution Test](/fig/ssca_resolution_test.png)
+
+*Window Resolution Test*
+
+![SSCA Window Resolution Test](/fig/ssca_window_resolution_test.png)
 
 *Extended Validation Test*
 
